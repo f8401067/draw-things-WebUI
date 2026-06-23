@@ -9,11 +9,12 @@ import json
 import time
 import math
 import base64
+import secrets
 import logging
 import argparse
 from pathlib import Path
-from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory
+from datetime import datetime, timedelta
+from flask import Flask, request, jsonify, send_from_directory, session
 from flask_cors import CORS
 import requests
 from PIL import Image
@@ -29,7 +30,9 @@ try:
         migrate_from_json,
         get_history_count,
         get_or_create_user,
-        get_user_history
+        get_user_history,
+        find_user_by_id,
+        public_user_dict,
     )
 except ModuleNotFoundError:
     from database import (
@@ -40,7 +43,9 @@ except ModuleNotFoundError:
         migrate_from_json,
         get_history_count,
         get_or_create_user,
-        get_user_history
+        get_user_history,
+        find_user_by_id,
+        public_user_dict,
     )
 
 # 导入历史记录路由模块
@@ -51,9 +56,21 @@ except ModuleNotFoundError:
 
 # 导入 AI 润色模块
 try:
-    from src.ai_refine import refine_prompt_with_llm, load_config as load_ai_config, save_config as save_ai_config
+    from src.ai_refine import refine_prompt_with_llm, load_config as load_ai_config, save_config as save_ai_config, get_llm_config_for_user, save_llm_config_for_user
 except ModuleNotFoundError:
-    from ai_refine import refine_prompt_with_llm, load_config as load_ai_config, save_config as save_ai_config
+    from ai_refine import refine_prompt_with_llm, load_config as load_ai_config, save_config as save_ai_config, get_llm_config_for_user, save_llm_config_for_user
+
+# 导入 auth 蓝图
+try:
+    from src.auth_routes import bp as auth_bp
+except ModuleNotFoundError:
+    from auth_routes import bp as auth_bp
+
+# 导入 prompt 预设蓝图
+try:
+    from src.presets_routes import bp as presets_bp
+except ModuleNotFoundError:
+    from presets_routes import bp as presets_bp
 
 # 创建 Flask 应用实例
 # 静态文件目录在项目根目录的 static 文件夹
@@ -62,7 +79,11 @@ _static_folder = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspat
 app = Flask(__name__, static_folder=_static_folder, static_url_path='')
 del _os, _static_folder
 # 启用跨域支持
-CORS(app)
+CORS(app, supports_credentials=True)
+
+# ===== Session / 安全配置 =====
+# 实际加载 SECRET_KEY 与注册蓝图放到 get_config_file_path() 定义之后（见文件下方）
+SESSION_LIFETIME_DAYS = 30
 
 # 全局并发计数器（线程安全）
 import threading
@@ -127,6 +148,42 @@ def get_config_file_path():
     return app_root / 'config.json'
 
 
+# ===== Session / 安全配置（实际加载） =====
+def _load_or_create_secret_key():
+    """从 config.json 读 SECRET_KEY，没有则生成一个写入文件。
+    持久化避免服务器重启后所有 session 失效。
+    """
+    config_path = get_config_file_path()
+    config = {}
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f) or {}
+        except (json.JSONDecodeError, IOError):
+            config = {}
+    key = config.get("secret_key")
+    if not key or not isinstance(key, str) or len(key) < 32:
+        key = secrets.token_urlsafe(48)
+        config["secret_key"] = key
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except IOError as e:
+            print(f"[auth] 警告: secret_key 写入 config.json 失败: {e}")
+    return key
+
+app.config["SECRET_KEY"] = _load_or_create_secret_key()
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSION_LIFETIME_DAYS)
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+# HTTPS 部署时可启用 secure
+# app.config["SESSION_COOKIE_SECURE"] = True
+
+# 注册蓝图
+app.register_blueprint(auth_bp)
+app.register_blueprint(presets_bp)
+
+
 # ===== 目录和文件路径初始化 =====
 
 # 存储生成图片的目录
@@ -169,19 +226,25 @@ DEFAULT_DRAWTHINGS_URL = "http://127.0.0.1:7888"
 
 
 def get_user_id():
-    """从请求头中获取或创建用户 ID
-    
-    Returns:
-        int: 用户 ID
+    """从 session 或请求头中获取用户 ID。
+
+    优先级：
+    1. Flask session（推荐：登录/游客后由 server 设置）
+    2. X-User-ID 请求头（兼容老前端；存在但和 session 冲突时优先 session）
+    3. 自动创建/获取匿名用户（兼容老接口）
     """
+    session_uid = session.get("user_id")
+    if session_uid:
+        return int(session_uid)
+
     user_id_header = request.headers.get("X-User-ID")
-    
+
     if user_id_header:
         try:
             return int(user_id_header)
         except (ValueError, TypeError):
             pass
-    
+
     # 如果没有提供用户 ID，自动创建或获取一个
     return get_or_create_user()
 
@@ -473,43 +536,61 @@ def service_worker():
 @app.route('/api/status', methods=['GET'])
 def check_status():
     """检查 DrawThings 服务器状态
-    
+
     连接到配置的 DrawThings 服务地址，获取当前提示词和模型信息。
-    
+    DrawThings 根路径 404（仅暴露 sdapi/* 子路径），故优先探测 /sdapi/v1/options。
+
     Returns:
         Response: JSON 响应，包含 success、prompt、model 字段
     """
-    drawthings_url = load_config()
-    try:
-        response = requests.get(drawthings_url, timeout=2)
-        if response.status_code == 200:
-            data = response.json()
-            return jsonify({
-                "success": True,
-                "prompt": data.get("prompt", ""),
-                "model": data.get("model", ""),
-                "raw_data": data
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "error": f"服务器返回状态码: {response.status_code}"
-            }), 500
-    except requests.exceptions.ConnectionError:
-        return jsonify({
-            "success": False,
-            "error": f"无法连接到 DrawThings 服务器: {drawthings_url}"
-        }), 500
-    except requests.exceptions.Timeout:
-        return jsonify({
-            "success": False,
-            "error": "连接 DrawThings 服务器超时"
-        }), 500
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+    drawthings_url = load_config().rstrip("/")
+    # DrawThings 仅暴露 sdapi/v1/options 作为 GET 端点（其它 sdapi 端点对 GET 404）
+    # 但 DrawThings 处于"正在生成"状态时 options 端点会被占用、不返回 200，
+    # 此时回退看根路径 —— DrawThings 根路径仅在生成中可被访问（返回 200）。
+    probe_urls = [
+        f"{drawthings_url}/sdapi/v1/options",
+        drawthings_url,
+    ]
+    # 在某些环境下（sandbox 代理）本机内网地址会被错误代理，
+    # 故禁用代理以确保 DrawThings（127.0.0.1:7888）能直连
+    no_proxy = {"http": None, "https": None}
+    last_error = None
+    for url in probe_urls:
+        try:
+            response = requests.get(url, timeout=2, proxies=no_proxy)
+            if response.status_code == 200:
+                # /sdapi/v1/options 返回 JSON；根路径在生成中可能返回 HTML/纯文本
+                if url.endswith("/sdapi/v1/options"):
+                    try:
+                        data = response.json()
+                    except ValueError:
+                        last_error = f"{url} 返回了非 JSON 响应"
+                        continue
+                    return jsonify({
+                        "success": True,
+                        "prompt": data.get("prompt", ""),
+                        "model": data.get("model", ""),
+                        "raw_data": data,
+                    })
+                else:
+                    # 根路径 200 表示 DrawThings 在线（通常在生成中）
+                    return jsonify({
+                        "success": True,
+                        "prompt": "",
+                        "model": "",
+                        "raw_data": {"note": "DrawThings 在线但 options 端点正忙（可能在生成中）"},
+                    })
+            last_error = f"服务器返回状态码: {response.status_code}（{url}）"
+        except requests.exceptions.ConnectionError:
+            last_error = f"无法连接到 DrawThings 服务器: {url}"
+        except requests.exceptions.Timeout:
+            last_error = f"连接 DrawThings 服务器超时: {url}"
+        except Exception as e:
+            last_error = f"探测 {url} 失败: {e}"
+    return jsonify({
+        "success": False,
+        "error": last_error or "未知错误",
+    }), 500
 
 
 @app.route('/api/estimate_time', methods=['POST'])
@@ -625,15 +706,18 @@ def generate_image():
                 from llm_client import async_detect_nsfw
             prompt = params.get("prompt", "")
             negative_prompt = params.get("negative_prompt", "")
-            async_detect_nsfw(prompt, negative_prompt, timestamp)
+            async_detect_nsfw(prompt, negative_prompt, timestamp, user_id=user_id)
         except Exception as e:
             print(f"启动NSFW检测失败: {e}")
         
         # 转发请求到 DrawThings 服务
+        # 禁用代理以确保 DrawThings（127.0.0.1:7888）能直连
+        no_proxy = {"http": None, "https": None}
         drawthings_response = requests.post(
             f"{drawthings_url}/sdapi/v1/txt2img",
             json=params,
-            timeout=600  # 10 分钟超时，因为生成可能需要较长时间
+            timeout=600,  # 10 分钟超时，因为生成可能需要较长时间
+            proxies=no_proxy
         )
 
         if drawthings_response.status_code != 200:
@@ -684,7 +768,8 @@ def generate_image():
         seed = -1
         try:
             # 请求 DrawThings 服务状态接口获取实际的 seed
-            status_response = requests.get(drawthings_url, timeout=10)
+            # 禁用代理以确保 DrawThings（127.0.0.1:7888）能直连
+            status_response = requests.get(drawthings_url, timeout=10, proxies=no_proxy)
             if status_response.status_code == 200:
                 status_data = status_response.json()
                 if "seed" in status_data:
@@ -889,6 +974,7 @@ def refine_prompt():
     """AI 润色提示词
     
     接收用户输入的提示词，调用大模型 API 进行优化。
+    优先使用当前登录用户保存在服务端的 LLM 配置。
     
     Returns:
         Response: JSON 响应，包含润色后的提示词
@@ -903,8 +989,16 @@ def refine_prompt():
                 "success": False,
                 "error": "提示词不能为空"
             }), 400
+        
+        # 获取当前用户 ID（如果已登录）
+        user_id = None
+        user = getattr(request, 'current_user', None)
+        if user:
+            user_id = user.get("id")
+        else:
+            user_id = session.get("user_id")
             
-        refined_prompt = refine_prompt_with_llm(original_prompt, language)
+        refined_prompt = refine_prompt_with_llm(original_prompt, language, user_id=user_id)
         
         return jsonify({
             "success": True,
@@ -926,19 +1020,23 @@ def refine_prompt():
 def get_refine_config():
     """获取 AI 润色配置
     
+    优先返回当前登录用户在数据库中保存的配置，否则返回 config.json 的默认值。
+    
     Returns:
-        Response: JSON 响应，包含当前的 API 配置（不返回 key）
+        Response: JSON 响应，包含当前的 API 配置（不返回 key 明文）
     """
-    config = load_ai_config()
-    # 为了安全，不返回完整的 api_key
-    safe_config = {
-        "llm_api_url": config.get("llm_api_url"),
-        "llm_model": config.get("llm_model"),
-        "has_key": bool(config.get("llm_api_key") or os.getenv("LLM_API_KEY"))
-    }
+    # 获取当前用户
+    user_id = None
+    user = getattr(request, 'current_user', None)
+    if user:
+        user_id = user.get("id")
+    else:
+        user_id = session.get("user_id")
+    
+    config = get_llm_config_for_user(user_id)
     return jsonify({
         "success": True,
-        "config": safe_config
+        "config": config
     })
 
 
@@ -946,14 +1044,43 @@ def get_refine_config():
 def update_refine_config():
     """更新 AI 润色配置
     
+    将当前登录用户的 LLM 配置保存到服务端数据库，每个用户独立存储。
+    同时向后兼容，也会更新 config.json（作为新用户的默认配置）。
+    
     Returns:
         Response: JSON 响应，包含操作结果
     """
     try:
         data = request.json
-        current_config = load_ai_config()
         
-        # 更新 LLM 相关配置，保留其他配置（如 drawthings_url）
+        # 获取当前用户
+        user_id = None
+        user = getattr(request, 'current_user', None)
+        if user:
+            user_id = user.get("id")
+        else:
+            user_id = session.get("user_id")
+        
+        if not user_id:
+            return jsonify({
+                "success": False,
+                "error": "请先登录"
+            }), 401
+        
+        llm_api_url = data.get("llm_api_url", "")
+        llm_model = data.get("llm_model", "")
+        llm_api_key = data.get("llm_api_key", "")
+        
+        # 保存到用户专属数据库
+        ok = save_llm_config_for_user(user_id, llm_api_url, llm_model, llm_api_key)
+        if not ok:
+            return jsonify({
+                "success": False,
+                "error": "保存配置失败"
+            }), 500
+        
+        # 同时更新 config.json（向后兼容，作为新用户的默认配置）
+        current_config = load_ai_config()
         new_config = current_config.copy()
         if "llm_api_url" in data:
             new_config["llm_api_url"] = data["llm_api_url"]
@@ -961,17 +1088,12 @@ def update_refine_config():
             new_config["llm_model"] = data["llm_model"]
         if "llm_api_key" in data:
             new_config["llm_api_key"] = data["llm_api_key"]
+        save_ai_config(new_config)
         
-        if save_ai_config(new_config):
-            return jsonify({
-                "success": True,
-                "message": "配置保存成功"
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "error": "保存配置失败"
-            }), 500
+        return jsonify({
+            "success": True,
+            "message": "配置保存成功"
+        })
     except Exception as e:
         return jsonify({
             "success": False,

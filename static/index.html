@@ -1152,8 +1152,10 @@
     <div class="container">
         <!-- Header Section -->
         <div class="header-section">
-            <h1>AI文生图 <span class="user-id-display">用户ID:<strong id="userUidValue">加载中...</strong>(自动生成)</span></h1>
+            <h1>AI文生图 <span class="user-id-display" id="currentUserDisplay">账号:<strong id="userUidValue">未登录</strong></span></h1>
             <div class="header-actions">
+                <button id="loginBtn" class="history-btn" onclick="openAuthModal()" style="margin-right: 10px; display: none;">登录</button>
+                <button id="logoutBtn" class="history-btn" onclick="logout()" style="display: none; margin-right: 10px;">注销</button>
                 <button id="backToFormBtn" class="history-btn" onclick="backToForm()" style="display: none; margin-right: 10px;">返回首页</button>
                 <a href="/history.html" class="history-btn">历史图片</a>
             </div>
@@ -1177,7 +1179,8 @@
                     <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center;">
                         <button class="clear-btn" onclick="clearPrompt()">🗑️ 清空</button>
                         <button class="fullscreen-btn" onclick="openPromptFullscreen()">🔍 全屏编辑</button>
-                        <button class="btn-ai-refine" id="refineBtn" onclick="refinePromptWithAI()" style="margin-left: auto; padding: 8px 16px; font-size: 13px;">✨ AI 润色</button>
+                        <button class="btn-ai-refine" id="refineBtn" onclick="refinePromptWithAI()" style="padding: 8px 16px; font-size: 13px;">✨ AI 润色</button>
+                        <button class="btn-ai-settings" onclick="openLlmConfigModal()" title="AI 大模型配置" style="padding: 8px 12px; font-size: 13px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; margin-left: auto;">⚙️</button>
                     </div>
                 </div>
             </div>
@@ -1306,11 +1309,36 @@
         </div>
     </div>
 
+    <!-- LLM Config Modal -->
+    <div id="llmConfigModal" class="config-modal">
+        <div class="config-modal-content">
+            <h3>🤖 AI 大模型配置</h3>
+            <p style="font-size: 13px; color: #666; margin-bottom: 15px;">配置大模型 API 用于提示词润色和内容安全检测。每个用户的配置独立保存。</p>
+            <div class="config-form-group">
+                <label for="llmApiUrl">API 地址</label>
+                <input type="text" id="llmApiUrl" placeholder="例如: https://api.openai.com/v1/chat/completions">
+            </div>
+            <div class="config-form-group">
+                <label for="llmModel">模型名称</label>
+                <input type="text" id="llmModel" placeholder="例如: gpt-3.5-turbo">
+            </div>
+            <div class="config-form-group">
+                <label for="llmApiKey">API Key</label>
+                <input type="password" id="llmApiKey" placeholder="输入 API Key（留空不修改）">
+                <span id="llmKeyHint" style="font-size: 12px; color: #888; margin-top: 4px; display: inline-block;"></span>
+            </div>
+            <div class="config-buttons">
+                <button class="btn-config btn-config-secondary" onclick="closeLlmConfigModal()">取消</button>
+                <button class="btn-config btn-config-primary" onclick="saveLlmConfig()">保存配置</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Prompt Preset Modal -->
     <div id="presetModal" class="preset-modal">
         <div class="preset-modal-content">
             <div class="preset-modal-header">
-                <h3>(常用列表会保存在浏览器中)</h3>
+                <h3>常用提示词（已保存到服务端）</h3>
                 <button class="preset-close-btn" onclick="closePresetModal()">✕ 关闭</button>
             </div>
             <div class="preset-search-box">
@@ -1377,6 +1405,43 @@
         </div>
     </div>
 
+    <!-- Auth Modal (登录/注册/游客) -->
+    <div id="authModal" class="preset-modal">
+        <div class="preset-modal-content" style="max-width: 420px;">
+            <div class="preset-modal-header">
+                <h3 id="authModalTitle">登录</h3>
+                <button class="preset-close-btn" onclick="closeAuthModal()">✕ 关闭</button>
+            </div>
+            <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                <button id="authTabLogin" class="btn-preset btn-preset-primary" onclick="switchAuthTab('login')" style="flex: 1;">登录</button>
+                <button id="authTabRegister" class="btn-preset btn-preset-secondary" onclick="switchAuthTab('register')" style="flex: 1;">注册</button>
+            </div>
+            <div id="authErrorMsg" style="display: none; color: #e74c3c; background: #fdecea; padding: 10px; border-radius: 6px; margin-bottom: 12px; font-size: 13px;"></div>
+            <div class="preset-form-group">
+                <label for="authUsername">账号</label>
+                <input type="text" id="authUsername" placeholder="请输入账号" autocomplete="username" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box;">
+            </div>
+            <div class="preset-form-group" style="margin-top: 12px;">
+                <label for="authPassword">密码</label>
+                <input type="password" id="authPassword" placeholder="请输入密码" autocomplete="current-password" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box;">
+            </div>
+            <div class="preset-form-group" id="authPassword2Group" style="margin-top: 12px; display: none;">
+                <label for="authPassword2">再次输入密码</label>
+                <input type="password" id="authPassword2" placeholder="请再次输入密码" autocomplete="new-password" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box;">
+            </div>
+            <div class="preset-form-buttons" style="margin-top: 18px;">
+                <button class="btn-preset btn-preset-primary" id="authSubmitBtn" onclick="submitAuth()" style="width: 100%; padding: 12px;">登录</button>
+            </div>
+            <div style="margin-top: 14px; padding-top: 14px; border-top: 1px dashed #eee; text-align: center;">
+                <button class="btn-preset btn-preset-secondary" onclick="loginAsGuest()" style="width: 100%; padding: 10px; background: #f8f9fa; color: #555;">以游客方式继续（不保存账号信息）</button>
+            </div>
+            <div style="margin-top: 10px; font-size: 12px; color: #888; text-align: center; line-height: 1.5;">
+                游客模式下，提示词预设和历史会保留在服务端，但不会绑定账号<br>
+                登录后 30 天内免登录
+            </div>
+        </div>
+    </div>
+
     <script>
         // API base URL
         const API_BASE = '';
@@ -1384,8 +1449,8 @@
         // Current zoom level
         let currentZoom = 1;
 
-        // User ID for history tracking
-        let userId = null;
+        // 当前用户/账号信息见 initAuth() 中定义的 currentUser / legacyUserId
+        let initialized = false; // 防止重复初始化
 
         // Register Service Worker for image caching
         if ('serviceWorker' in navigator) {
@@ -1407,67 +1472,25 @@
             });
         }
 
-        // Initialize user ID
-        function initUserId() {
-            // Try to load from localStorage
-            const savedId = localStorage.getItem('user_id');
-            
-            if (savedId) {
-                userId = parseInt(savedId);
-                displayUserId();
-            } else {
-                // 首次访问，请求服务器分配新ID
-                createNewUserId();
-            }
-        }
-        
-        // Create new user ID from server
-        async function createNewUserId() {
-            try {
-                const response = await fetch(`${API_BASE}/api/user/create`, {
-                    method: 'POST'
-                });
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.success && data.user_id) {
-                        userId = data.user_id;
-                        localStorage.setItem('user_id', userId);
-                        displayUserId();
-                        console.log(`新用户ID已分配: ${userId}`);
-                    }
-                }
-            } catch (error) {
-                console.error('Failed to create user ID:', error);
-                displayUserId(); // 显示"未分配"
-            }
-        }
-        
-        function displayUserId() {
-            const displayElement = document.getElementById('userUidValue');
-            if (displayElement) {
-                if (userId) {
-                    displayElement.textContent = userId;
-                } else {
-                    displayElement.textContent = '加载中...';
-                }
-            }
-        }
+        // ===== 用户认证 =====
+        // 老 localStorage.user_id 作为 legacy id 用于游客绑定
+        let legacyUserId = null;
+        let currentUser = null; // 服务端返回的 user dict（含 is_guest）
+        let authTabMode = 'login'; // 'login' | 'register'
 
-
-
-        // Get fetch options with user ID header
+        // 用 session-cookie 模式取 user id。优先用 session，session 失效再退回 localStorage 的 X-User-ID 兼容老逻辑。
         function getFetchOptions(method = 'GET', body = null) {
             const options = {
                 method: method,
-                headers: {}
+                headers: {},
+                credentials: 'include',
             };
-            
-            // Add user ID header if available
-            if (userId) {
-                options.headers['X-User-ID'] = userId;
+            // 兜底：服务端也会优先看 session，这里传 header 主要是为了老接口兼容
+            if (currentUser && currentUser.id) {
+                options.headers['X-User-ID'] = currentUser.id;
+            } else if (legacyUserId) {
+                options.headers['X-User-ID'] = legacyUserId;
             }
-            
             if (body) {
                 options.headers['Content-Type'] = 'application/json';
                 options.body = JSON.stringify(body);
@@ -1475,12 +1498,207 @@
             return options;
         }
 
+        // 启动时拉一次当前用户
+        async function initAuth() {
+            // 先把 localStorage.user_id 留着，作为游客登录时的 legacy_user_id
+            const saved = localStorage.getItem('user_id');
+            if (saved) {
+                const n = parseInt(saved);
+                if (!isNaN(n)) legacyUserId = n;
+            }
+            try {
+                const r = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+                const data = await r.json();
+                if (data && data.authenticated && data.user) {
+                    // 已登录，直接初始化页面
+                    currentUser = data.user;
+                    updateUserDisplay();
+                    if (currentUser.id) {
+                        localStorage.setItem('user_id', currentUser.id);
+                        legacyUserId = currentUser.id;
+                    }
+                    onAuthSuccess();
+                } else {
+                    // 未登录：弹出登录框
+                    openAuthModal();
+                }
+            } catch (e) {
+                console.error('initAuth failed:', e);
+                // 网络失败也弹出登录框
+                openAuthModal();
+            }
+        }
+
+        function updateUserDisplay() {
+            const displayEl = document.getElementById('userUidValue');
+            const logoutBtn = document.getElementById('logoutBtn');
+            const loginBtn = document.getElementById('loginBtn');
+            if (currentUser) {
+                const name = currentUser.is_guest
+                    ? (currentUser.display_name || `游客-${currentUser.id}`)
+                    : currentUser.username;
+                if (displayEl) displayEl.textContent = name;
+                if (logoutBtn) logoutBtn.style.display = '';
+                if (loginBtn) loginBtn.style.display = 'none';
+            } else {
+                if (displayEl) displayEl.textContent = '未登录';
+                if (logoutBtn) logoutBtn.style.display = 'none';
+                if (loginBtn) loginBtn.style.display = '';
+            }
+        }
+
+        // 显示登录/注册模态框
+        function openAuthModal() {
+            switchAuthTab('login');
+            document.getElementById('authErrorMsg').style.display = 'none';
+            document.getElementById('authModal').classList.add('show');
+            setTimeout(() => document.getElementById('authUsername').focus(), 50);
+        }
+
+        function closeAuthModal() {
+            document.getElementById('authModal').classList.remove('show');
+            // 关闭时还未登录，自动以游客方式进入
+            if (!currentUser) {
+                loginAsGuest({ silent: true });
+            }
+        }
+
+        function switchAuthTab(tab) {
+            authTabMode = tab;
+            const title = document.getElementById('authModalTitle');
+            const submit = document.getElementById('authSubmitBtn');
+            const tabLogin = document.getElementById('authTabLogin');
+            const tabRegister = document.getElementById('authTabRegister');
+            const pwd2Group = document.getElementById('authPassword2Group');
+            document.getElementById('authErrorMsg').style.display = 'none';
+
+            if (tab === 'login') {
+                title.textContent = '登录';
+                submit.textContent = '登录';
+                tabLogin.className = 'btn-preset btn-preset-primary';
+                tabRegister.className = 'btn-preset btn-preset-secondary';
+                pwd2Group.style.display = 'none';
+                document.getElementById('authPassword2').value = '';
+            } else {
+                title.textContent = '注册';
+                submit.textContent = '注册';
+                tabLogin.className = 'btn-preset btn-preset-secondary';
+                tabRegister.className = 'btn-preset btn-preset-primary';
+                pwd2Group.style.display = '';
+            }
+        }
+
+        function showAuthError(msg) {
+            const el = document.getElementById('authErrorMsg');
+            el.textContent = msg;
+            el.style.display = '';
+        }
+
+        async function submitAuth() {
+            const username = document.getElementById('authUsername').value.trim();
+            const password = document.getElementById('authPassword').value;
+            const password2 = document.getElementById('authPassword2').value;
+            if (!username || !password) {
+                showAuthError('请填写账号和密码');
+                return;
+            }
+            if (authTabMode === 'register' && password !== password2) {
+                showAuthError('两次输入的密码不一致');
+                return;
+            }
+            const url = authTabMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+            try {
+                const r = await fetch(`${API_BASE}${url}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password, password2 }),
+                });
+                const data = await r.json();
+                if (!r.ok || data.error) {
+                    showAuthError(data.error || `请求失败 (${r.status})`);
+                    return;
+                }
+                currentUser = data.user;
+                localStorage.setItem('user_id', currentUser.id);
+                legacyUserId = currentUser.id;
+                updateUserDisplay();
+                closeAuthModal();
+                showToast(authTabMode === 'login' ? '登录成功' : '注册成功');
+                // 提示词预设刷新并初始化页面
+                await loadPresets();
+                onAuthSuccess();
+            } catch (e) {
+                showAuthError('网络错误：' + e.message);
+            }
+        }
+
+        async function loginAsGuest(opts = {}) {
+            const { silent = false } = opts;
+            try {
+                const r = await fetch(`${API_BASE}/api/auth/guest`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ legacy_user_id: legacyUserId }),
+                });
+                const data = await r.json();
+                if (!r.ok || data.error) {
+                    console.error('guest login failed:', data.error);
+                    return false;
+                }
+                currentUser = data.user;
+                if (currentUser.id) {
+                    localStorage.setItem('user_id', currentUser.id);
+                    legacyUserId = currentUser.id;
+                }
+                updateUserDisplay();
+                if (!silent) showToast(`已以游客身份登录（${currentUser.display_name || '游客'}）`);
+                // 游客登录成功后初始化页面
+                onAuthSuccess();
+                return true;
+            } catch (e) {
+                console.error('guest login error:', e);
+                return false;
+            }
+        }
+
+        async function logout() {
+            try {
+                await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+            } catch (e) {}
+            currentUser = null;
+            initialized = false;
+            updateUserDisplay();
+            // 清空当前显示的预设
+            presets = [];
+            filteredPresets = [];
+            renderPresetList();
+            // 弹出登录模态框
+            openAuthModal();
+        }
+
+        // 受保护接口调用的统一错误处理
+        async function requireAuth() {
+            if (currentUser) return true;
+            openAuthModal();
+            showAuthError('请先登录或以游客方式继续');
+            return false;
+        }
+
+        // 登录成功后执行的初始化（防止重复执行）
+        function onAuthSuccess() {
+            if (initialized) return;
+            initialized = true;
+            checkServerStatus();
+            loadSavedValues();
+            loadPresets();
+        }
+
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
-            initUserId();
-            checkServerStatus();
             setupEventListeners();
-            loadSavedValues();
+            initAuth();
         });
 
         // Check server status
@@ -2121,6 +2339,69 @@
             }
         }
 
+        // ===== AI 大模型配置（用户独立保存到服务端）=====
+
+        // Open LLM config modal
+        async function openLlmConfigModal() {
+            if (!(await requireAuth())) return;
+            const modal = document.getElementById('llmConfigModal');
+            modal.classList.add('show');
+
+            // 从服务端加载当前配置
+            try {
+                const r = await fetch(`${API_BASE}/api/refine_config`, getFetchOptions());
+                const data = await r.json();
+                if (data.success && data.config) {
+                    document.getElementById('llmApiUrl').value = data.config.llm_api_url || '';
+                    document.getElementById('llmModel').value = data.config.llm_model || '';
+                    document.getElementById('llmApiKey').value = '';
+                    const hint = document.getElementById('llmKeyHint');
+                    hint.textContent = data.config.has_key ? '(已设置 API Key，留空则不修改)' : '(未设置 API Key)';
+                }
+            } catch (e) {
+                console.error('加载 LLM 配置失败:', e);
+            }
+        }
+
+        // Close LLM config modal
+        function closeLlmConfigModal() {
+            document.getElementById('llmConfigModal').classList.remove('show');
+        }
+
+        // Save LLM config
+        async function saveLlmConfig() {
+            const apiUrl = document.getElementById('llmApiUrl').value.trim();
+            const model = document.getElementById('llmModel').value.trim();
+            const apiKey = document.getElementById('llmApiKey').value.trim();
+
+            if (!apiUrl) {
+                alert('请填写 API 地址');
+                return;
+            }
+
+            const payload = {
+                llm_api_url: apiUrl,
+                llm_model: model,
+            };
+            // 只有用户输入了新 key 才发送
+            if (apiKey) {
+                payload.llm_api_key = apiKey;
+            }
+
+            try {
+                const r = await fetch(`${API_BASE}/api/refine_config`, getFetchOptions('POST', payload));
+                const data = await r.json();
+                if (data.success) {
+                    alert('AI 配置保存成功！');
+                    closeLlmConfigModal();
+                } else {
+                    alert('保存失败：' + (data.error || r.status));
+                }
+            } catch (e) {
+                alert('保存失败：' + e.message);
+            }
+        }
+
         // Auto-save on input in fullscreen mode
         document.addEventListener('DOMContentLoaded', function() {
             const fullscreenTextarea = document.getElementById('promptFullscreenTextarea');
@@ -2155,41 +2436,40 @@
         let undoState = null; // Store state for undo
         let undoTimeout = null; // Timeout for auto-hide undo
 
-        // Load presets from localStorage
-        function loadPresets() {
-            const saved = localStorage.getItem('prompt_presets');
-            if (saved) {
-                try {
-                    presets = JSON.parse(saved);
-                } catch (e) {
-                    console.error('Failed to load presets:', e);
-                    presets = [];
-                }
-            } else {
-                // Initialize with some default presets
-                presets = [
-                    {
-                        id: Date.now(),
-                        content: 'masterpiece, best quality, ultra-detailed, 8k, professional photography, beautiful lighting, sharp focus'
-                    },
-                    {
-                        id: Date.now() + 1,
-                        content: 'beautiful landscape, natural lighting, panoramic view, vivid colors, high resolution, detailed scenery'
-                    },
-                    {
-                        id: Date.now() + 2,
-                        content: 'anime style, vibrant colors, cel shading, detailed character design, expressive eyes, dynamic pose'
-                    }
-                ];
-                savePresets();
+        // Load presets from server
+        async function loadPresets() {
+            if (!currentUser) {
+                presets = [];
+                filteredPresets = [];
+                renderPresetList();
+                return;
             }
-            filteredPresets = [...presets];
+            try {
+                const r = await fetch(`${API_BASE}/api/presets`, getFetchOptions());
+                if (!r.ok) {
+                    if (r.status === 401) {
+                        currentUser = null;
+                        updateUserDisplay();
+                    }
+                    presets = [];
+                    filteredPresets = [];
+                    renderPresetList();
+                    return;
+                }
+                const data = await r.json();
+                presets = (data.presets || []).map(p => ({ id: p.id, content: p.content }));
+                filteredPresets = [...presets];
+                renderPresetList();
+            } catch (e) {
+                console.error('加载预设失败:', e);
+                presets = [];
+                filteredPresets = [];
+                renderPresetList();
+            }
         }
 
-        // Save presets to localStorage
-        function savePresets() {
-            localStorage.setItem('prompt_presets', JSON.stringify(presets));
-        }
+        // 保留兼容老调用的占位
+        function savePresets() { /* 改用 savePreset/deletePreset 走 API */ }
 
         // Open preset modal
         function openPresetModal() {
@@ -2430,7 +2710,8 @@
         }
 
         // Save preset
-        function savePreset() {
+        async function savePreset() {
+            if (!(await requireAuth())) return;
             const content = document.getElementById('presetContent').value.trim();
 
             if (!content) {
@@ -2438,41 +2719,46 @@
                 return;
             }
 
-            if (editingPresetId) {
-                // Update existing preset
-                const index = presets.findIndex(p => p.id === editingPresetId);
-                if (index !== -1) {
-                    presets[index].content = content;
-                    showToast('提示词已更新');
+            try {
+                let r;
+                const payload = { content };
+                if (editingPresetId) {
+                    r = await fetch(`${API_BASE}/api/presets/${editingPresetId}`, getFetchOptions('PUT', payload));
+                } else {
+                    r = await fetch(`${API_BASE}/api/presets`, getFetchOptions('POST', payload));
                 }
-            } else {
-                // Add new preset
-                presets.push({
-                    id: Date.now(),
-                    content: content
-                });
-                showToast('提示词已添加');
+                const data = await r.json();
+                if (!r.ok || data.error) {
+                    alert('保存失败：' + (data.error || r.status));
+                    return;
+                }
+                showToast(editingPresetId ? '提示词已更新' : '提示词已添加');
+                await loadPresets();
+                document.getElementById('presetSearchInput').value = '';
+                hidePresetForm();
+            } catch (e) {
+                alert('保存失败：' + e.message);
             }
-
-            savePresets();
-            filteredPresets = [...presets];
-            document.getElementById('presetSearchInput').value = '';
-            renderPresetList();
-            hidePresetForm();
         }
 
         // Delete preset
-        function deletePreset(presetId) {
+        async function deletePreset(presetId) {
             const preset = presets.find(p => p.id === presetId);
             if (!preset) return;
 
-            confirm(`确认删除此提示词？`).then(result => {
-                if (result) {
-                    presets = presets.filter(p => p.id !== presetId);
-                    savePresets();
-                    filteredPresets = [...presets];
-                    renderPresetList();
+            confirm('确认删除此提示词？').then(async (result) => {
+                if (!result) return;
+                try {
+                    const r = await fetch(`${API_BASE}/api/presets/${presetId}`, getFetchOptions('DELETE'));
+                    const data = await r.json();
+                    if (!r.ok || data.error) {
+                        alert('删除失败：' + (data.error || r.status));
+                        return;
+                    }
                     showToast('提示词已删除');
+                    await loadPresets();
+                } catch (e) {
+                    alert('删除失败：' + e.message);
                 }
             });
         }
@@ -2493,9 +2779,6 @@
                     currentTargetTextarea = 'negativePrompt';
                 });
             }
-            
-            // Load presets
-            loadPresets();
         });
 
         // Toast notification

@@ -968,8 +968,9 @@
     <div class="container">
         <!-- Page Header -->
         <div class="page-header">
-            <h1>生成历史 <span class="user-id-display">用户ID:<strong id="userUidValue">加载中...</strong>(自动生成)</span></h1>
+            <h1>生成历史 <span class="user-id-display" id="currentUserDisplay">账号:<strong id="userUidValue">未登录</strong></span></h1>
             <div class="header-actions">
+                <button id="logoutBtn" class="btn btn-back" onclick="logout()" style="display: none; margin-right: 10px; border: 1px solid #ddd;">注销</button>
                 <a href="/" class="btn btn-back">返回首页</a>
             </div>
         </div>
@@ -1078,7 +1079,7 @@
 
     <script>
         const API_BASE = '';
-        let userId = null;
+        // userId/currentUser 见 initAuth() 中定义
         let showAllUsers = false;
         let currentDateFilter = '';
         let currentRatingFilter = null; // 默认不选择任何评级（显示全部）
@@ -1086,65 +1087,95 @@
         let showNsfwContent = false; // 默认隐藏NSFW内容
         let availableDates = [];
 
-        // Initialize user ID
-        async function initUserId() {
-            // Try to load from localStorage
-            const savedId = localStorage.getItem('user_id');
-            
-            if (savedId) {
-                userId = parseInt(savedId);
-                displayUserId();
-                return Promise.resolve();
-            } else {
-                // 首次访问，请求服务器分配新ID
-                return createNewUserId();
+        // ===== 用户认证（同步首页的 initAuth） =====
+        let currentUser = null;
+        let legacyUserId = null;
+
+        async function initAuth() {
+            const saved = localStorage.getItem('user_id');
+            if (saved) {
+                const n = parseInt(saved);
+                if (!isNaN(n)) legacyUserId = n;
             }
-        }
-        
-        // Create new user ID from server
-        async function createNewUserId() {
             try {
-                const response = await fetch(`${API_BASE}/api/user/create`, {
-                    method: 'POST'
-                });
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.success && data.user_id) {
-                        userId = data.user_id;
-                        localStorage.setItem('user_id', userId);
-                        displayUserId();
-                        console.log(`新用户ID已分配: ${userId}`);
+                const r = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+                const data = await r.json();
+                if (data && data.authenticated && data.user) {
+                    currentUser = data.user;
+                    if (currentUser.id) {
+                        localStorage.setItem('user_id', currentUser.id);
+                        legacyUserId = currentUser.id;
                     }
+                } else {
+                    // 未登录：调游客接口（用 legacy id 绑定或新开）
+                    await loginAsGuest({ silent: true });
                 }
-            } catch (error) {
-                console.error('Failed to create user ID:', error);
-                displayUserId(); // 显示"加载中"
+            } catch (e) {
+                console.error('initAuth failed:', e);
+                await loginAsGuest({ silent: true });
+            }
+            updateUserDisplay();
+        }
+
+        async function loginAsGuest(opts = {}) {
+            try {
+                const r = await fetch(`${API_BASE}/api/auth/guest`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ legacy_user_id: legacyUserId }),
+                });
+                const data = await r.json();
+                if (r.ok && data.user) {
+                    currentUser = data.user;
+                    if (currentUser.id) {
+                        localStorage.setItem('user_id', currentUser.id);
+                        legacyUserId = currentUser.id;
+                    }
+                    return true;
+                }
+            } catch (e) {
+                console.error('guest login error:', e);
+            }
+            return false;
+        }
+
+        function updateUserDisplay() {
+            const displayEl = document.getElementById('userUidValue');
+            const logoutBtn = document.getElementById('logoutBtn');
+            if (currentUser) {
+                const name = currentUser.is_guest
+                    ? (currentUser.display_name || `游客-${currentUser.id}`)
+                    : currentUser.username;
+                if (displayEl) displayEl.textContent = name;
+                if (logoutBtn) logoutBtn.style.display = '';
+            } else {
+                if (displayEl) displayEl.textContent = '未登录';
+                if (logoutBtn) logoutBtn.style.display = 'none';
             }
         }
-        
-        function displayUserId() {
-            const displayElement = document.getElementById('userUidValue');
-            if (displayElement) {
-                if (userId) {
-                    displayElement.textContent = userId;
-                } else {
-                    displayElement.textContent = '加载中...';
-                }
-            }
+
+        async function logout() {
+            try {
+                await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+            } catch (e) {}
+            currentUser = null;
+            updateUserDisplay();
+            // 注销后回到首页
+            window.location.href = '/';
         }
 
         function getFetchOptions(method = 'GET', body = null) {
             const options = {
                 method: method,
-                headers: {}
+                headers: {},
+                credentials: 'include',
             };
-            
-            // Add user ID header if available
-            if (userId) {
-                options.headers['X-User-ID'] = userId;
+            if (currentUser && currentUser.id) {
+                options.headers['X-User-ID'] = currentUser.id;
+            } else if (legacyUserId) {
+                options.headers['X-User-ID'] = legacyUserId;
             }
-            
             if (body) {
                 options.headers['Content-Type'] = 'application/json';
                 options.body = JSON.stringify(body);
@@ -1328,8 +1359,9 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-User-ID': userId || ''
+                        'X-User-ID': (currentUser && currentUser.id) || legacyUserId || ''
                     },
+                    credentials: 'include',
                     body: JSON.stringify({
                         image_id: imageId
                     })
@@ -1464,8 +1496,9 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-User-ID': userId || ''
+                        'X-User-ID': (currentUser && currentUser.id) || legacyUserId || ''
                     },
+                    credentials: 'include',
                     body: JSON.stringify({
                         image_id: imageId,
                         rating: actualRating
@@ -1506,8 +1539,9 @@
                 const response = await fetch(url, {
                     method: 'DELETE',
                     headers: {
-                        'X-User-ID': userId || ''
-                    }
+                        'X-User-ID': (currentUser && currentUser.id) || legacyUserId || ''
+                    },
+                    credentials: 'include'
                 });
                 
                 const result = await response.json();
@@ -1853,8 +1887,8 @@
 
         // Initialize
         document.addEventListener('DOMContentLoaded', async function() {
-            // 先初始化用户ID，等待完成
-            await initUserId();
+            // 先初始化用户身份（session 优先，其次老 localStorage id）
+            await initAuth();
             
             // 默认不设置日期筛选，显示所有日期的图片（利用缓存提升加载速度）
             currentDateFilter = '';

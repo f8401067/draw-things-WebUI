@@ -31,24 +31,33 @@ import os
 
 
 def get_user_id():
-    """从请求头中获取用户 ID
-    
-    从 X-User-ID 请求头中获取用户 ID。
-    注意：现在不再自动创建用户，客户端应该先调用 /api/user/create 获取 ID。
-    
+    """从 Session 或请求头中获取用户 ID
+
+    优先级：
+    1. Flask session（登录/游客后由 server 设置，最可靠）
+    2. X-User-ID 请求头（向前兼容老前端）
+    3. 均未提供则返回 None
+
     Returns:
         int or None: 用户 ID，如果未提供则返回 None
     """
+    from flask import session
+    # 优先从 session 获取（登录后设置）
+    uid = session.get('user_id')
+    if uid:
+        try:
+            return int(uid)
+        except (ValueError, TypeError):
+            pass
+
+    # 其次从 X-User-ID 请求头获取（向前兼容）
     user_id_header = request.headers.get("X-User-ID")
-    
     if user_id_header:
         try:
             return int(user_id_header)
         except (ValueError, TypeError):
             pass
-    
-    # 如果没有提供用户 ID，返回 None
-    # 调用方需要处理这种情况
+
     return None
 
 

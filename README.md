@@ -27,6 +27,7 @@ Used to remotely operate DrawThings on Mac for image generation and viewing imag
 - 🔎 **Smart Filtering**: Multi-dimensional filtering by date, rating, NSFW status, etc.
 - 🗑️ **Batch Cleanup**: One-click deletion of all images marked as Bad
 - 📝 **Logging**: Automatically logs image generation and LLM call records
+- 👤 **User System**: Support registration / login / guest mode, 30-day auto-login via cookie session, server-side prompt presets
 
 ## 🚀 Quick Start
 
@@ -142,6 +143,23 @@ Default configuration file and data directories will be automatically created on
 After the service starts, access in browser:
 - **Home Page**: `http://localhost:9898` (or your specified port)
 - **History**: `http://localhost:9898/history.html`
+
+## 👤 User System
+
+WebUI now supports three account modes, accessible via the top-right area of the page:
+
+| Mode | Sign-up | Storage | Auto-login |
+| --- | --- | --- | --- |
+| **Registered User** | Account + password + confirm password | Server-side, password in plain text (single-user self-hosted) | 30 days via session cookie |
+| **Guest** | One click, no info required | Server-side, anonymous (e.g. `游客-0007`) | 30 days, same browser is bound to the same guest |
+| **Anonymous (legacy)** | Existing users prior to v1.0.4 | Auto-marked as guest; legacy `user_id` in `localStorage` is preserved | Same as guest |
+
+- Login/registration modal pops up on first visit; switch to the "register" tab to create a new account.
+- After login, the top-right area shows the username and a "logout" button.
+- After logout, the page reloads to the login modal.
+- Session validity is 30 days; after expiration you will be asked to log in again.
+- The `secret_key` used to sign the session is stored in `config.json` (auto-generated on first launch, **do not delete it manually** unless you want all users to log in again).
+- All prompt presets are now server-side and per-user; `localStorage` is no longer used for preset storage.
 
 ## 📖 Usage Instructions
 

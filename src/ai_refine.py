@@ -78,12 +78,13 @@ def save_config(config):
         return False
 
 
-def refine_prompt_with_llm(prompt, language="zh"):
+def refine_prompt_with_llm(prompt, language="zh", user_id=None):
     """使用大模型润色提示词
     
     Args:
         prompt (str): 用户输入的原始提示词
         language (str): 目标语言，'zh' 为中文，'en' 为英文
+        user_id (int): 用户 ID，用于从数据库读取该用户的 LLM 配置
         
     Returns:
         str: 润色后的提示词，如果失败则返回原始提示词
@@ -94,11 +95,12 @@ def refine_prompt_with_llm(prompt, language="zh"):
     if not prompt or not prompt.strip():
         return prompt
 
-    config = load_config()
+    # 优先从数据库读取用户配置，否则回退到 config.json
+    config = _resolve_llm_config(user_id)
     api_key = config.get("llm_api_key") or os.getenv(API_KEY_ENV_VAR)
     
     if not api_key:
-        error_msg = "未配置 LLM API Key。请在 config.json 中设置 llm_api_key 或在环境变量中设置 LLM_API_KEY。"
+        error_msg = "未配置 LLM API Key。请在 AI 设置中配置 API Key。"
         llm_logger.error(error_msg)
         raise ValueError(error_msg)
     
@@ -167,3 +169,79 @@ def refine_prompt_with_llm(prompt, language="zh"):
         llm_logger.error(error_msg)
         raise Exception(error_msg)
 
+
+def _resolve_llm_config(user_id=None):
+    """解析 LLM 配置：优先从数据库读取用户配置，否则回退到 config.json。
+    
+    Args:
+        user_id (int): 用户 ID
+        
+    Returns:
+        dict: {llm_api_url, llm_model, llm_api_key}
+    """
+    # 先尝试从数据库获取用户配置
+    if user_id:
+        try:
+            try:
+                from src.database import get_user_llm_config
+            except ModuleNotFoundError:
+                from database import get_user_llm_config
+            db_config = get_user_llm_config(user_id)
+            if db_config and (db_config.get("llm_api_url") or db_config.get("llm_api_key")):
+                return db_config
+        except Exception:
+            pass  # 数据库不可用时回退到 config.json
+    
+    # 回退到 config.json
+    config = load_config()
+    return {
+        "llm_api_url": config.get("llm_api_url", DEFAULT_API_URL),
+        "llm_model": config.get("llm_model", DEFAULT_MODEL),
+        "llm_api_key": config.get("llm_api_key", ""),
+    }
+
+
+def get_llm_config_for_user(user_id):
+    """获取指定用户的 LLM 配置（给 API 用）。
+    优先返回数据库中的用户配置，若无则返回 config.json 的默认值。
+    
+    Returns:
+        dict: {llm_api_url, llm_model, has_key}
+    """
+    if user_id:
+        try:
+            try:
+                from src.database import get_user_llm_config
+            except ModuleNotFoundError:
+                from database import get_user_llm_config
+            db_config = get_user_llm_config(user_id)
+            if db_config and (db_config.get("llm_api_url") or db_config.get("llm_api_key")):
+                return {
+                    "llm_api_url": db_config.get("llm_api_url", ""),
+                    "llm_model": db_config.get("llm_model", ""),
+                    "has_key": bool(db_config.get("llm_api_key")),
+                }
+        except Exception:
+            pass
+    
+    # 回退
+    config = load_config()
+    return {
+        "llm_api_url": config.get("llm_api_url", DEFAULT_API_URL),
+        "llm_model": config.get("llm_model", DEFAULT_MODEL),
+        "has_key": bool(config.get("llm_api_key") or os.getenv(API_KEY_ENV_VAR)),
+    }
+
+
+def save_llm_config_for_user(user_id, llm_api_url="", llm_model="", llm_api_key=""):
+    """保存用户的 LLM 配置到数据库。"""
+    try:
+        try:
+            from src.database import save_user_llm_config
+        except ModuleNotFoundError:
+            from database import save_user_llm_config
+        save_user_llm_config(user_id, llm_api_url, llm_model, llm_api_key)
+        return True
+    except Exception as e:
+        print(f"保存用户 LLM 配置失败: {e}")
+        return False

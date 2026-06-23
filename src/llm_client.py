@@ -33,12 +33,33 @@ def get_config_file_path():
     return Path(app_root) / 'config.json'
 
 
-def load_llm_config():
-    """加载LLM配置
+def load_llm_config(user_id=None):
+    """加载LLM配置（优先从数据库读取用户配置，回退到 config.json）
     
+    Args:
+        user_id (int): 用户 ID，用于从数据库读取该用户的配置
+        
     Returns:
         dict: LLM配置信息
     """
+    # 先尝试从数据库获取用户配置
+    if user_id:
+        try:
+            try:
+                from src.database import get_user_llm_config
+            except ModuleNotFoundError:
+                from database import get_user_llm_config
+            db_config = get_user_llm_config(user_id)
+            if db_config and (db_config.get("llm_api_url") or db_config.get("llm_api_key")):
+                return {
+                    'api_url': db_config.get('llm_api_url'),
+                    'model': db_config.get('llm_model'),
+                    'api_key': db_config.get('llm_api_key'),
+                }
+        except Exception:
+            pass  # 数据库不可用时回退
+    
+    # 回退到 config.json
     try:
         config_path = get_config_file_path()
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -53,13 +74,14 @@ def load_llm_config():
         return None
 
 
-def detect_nsfw_content(prompt, negative_prompt="", image_id=None):
+def detect_nsfw_content(prompt, negative_prompt="", image_id=None, user_id=None):
     """使用LLM检测提示词是否包含NSFW内容
     
     Args:
         prompt (str): 正向提示词
         negative_prompt (str): 负向提示词
         image_id (str): 图片ID，用于更新数据库
+        user_id (int): 用户 ID，用于读取该用户的 LLM 配置
         
     Returns:
         bool: 如果检测到NSFW内容返回True，否则返回False
@@ -78,7 +100,7 @@ def detect_nsfw_content(prompt, negative_prompt="", image_id=None):
     
     start_time = time.time()
     
-    config = load_llm_config()
+    config = load_llm_config(user_id=user_id)
     if not config or not config['api_url']:
         llm_logger.warning("LLM配置不完整，跳过NSFW检测")
         print("LLM配置不完整，跳过NSFW检测")
@@ -170,13 +192,14 @@ def detect_nsfw_content(prompt, negative_prompt="", image_id=None):
         return False
 
 
-def async_detect_nsfw(prompt, negative_prompt="", image_id=None):
+def async_detect_nsfw(prompt, negative_prompt="", image_id=None, user_id=None):
     """异步执行NSFW检测，不阻塞主线程
     
     Args:
         prompt (str): 正向提示词
         negative_prompt (str): 负向提示词
         image_id (str): 图片ID
+        user_id (int): 用户 ID，用于读取该用户的 LLM 配置
     """
     def detect_task():
         try:
