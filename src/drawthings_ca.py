@@ -1,0 +1,52 @@
+"""
+Draw Things gRPC Root CA 证书
+
+来源：官方 ComfyUI 扩展 draw-things-comfyui/src/credentials.py（硬编码同一份）。
+
+⚠️ 关键坑：不能用「抓取服务端证书」代替这个 CA。
+服务端证书是由该 CA 签发的，把它当信任根会导致证书链不完整，
+握手会静默挂起 —— 表现为 DEADLINE_EXCEEDED / FD shutdown，且**没有任何 TLS 错误日志**，
+排查起来极痛苦（会误以为是服务端忙或并发问题）。
+
+证书信息：subject=CN=Draw Things Root CA，
+服务端证书 subject=CN=localhost，SAN 含 localhost 与 127.0.0.1。
+"""
+
+import grpc
+
+_cert = b'''-----BEGIN CERTIFICATE-----
+MIIFHTCCAwWgAwIBAgIUWxJuoygy7Hsb9bcSfggNGLGZJW4wDQYJKoZIhvcNAQEL
+BQAwHjEcMBoGA1UEAwwTRHJhdyBUaGluZ3MgUm9vdCBDQTAeFw0yNDEwMTUxNzI3
+NTJaFw0zNDEwMTMxNzI3NTJaMB4xHDAaBgNVBAMME0RyYXcgVGhpbmdzIFJvb3Qg
+Q0EwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQDe/RKAuabH2pEadZj6
+JRTOaEIMYXsAI7ZIG+LSAEkyK/QZAMdLq+wBq6uJDIEvTXMyyhNgkI3oUnS2PJqi
+y9lzGAh1s2y6MDG17BFboyriW0y6BKd42amX/g9A40ZC1cBs2NI9e0zjy/vhHLw1
+EHK1XDLsIYAZvqQLJR3zRslHTHN6BysNWNmO/s1myLHQzbjyg4+/JHqma5Xatz0W
+I5Wi6zxu/G1IdWeO6tlWWBSArDbhru+rb2U9p9/jKGW7fOom7sH9oBpj7q+xcrr5
+h2Aoam4xRqxc3SG7TRc1inEki86/FoWCARSqGo2t7q/brkwwGbeZsuwKhIuhWGzW
+CJKp0NvD11HyCqsJsLMTx9PXzEsCDFsios+zI6zu1aIVomO5h8d59oxMGEvNozIc
+gSHJI3pCiHmJt0o9xoRi0UGiB6PP3k4ZzxTV30wt0oMOzS8dgMdl1u0zpAc2aEGG
+4cdWQaDP2UgZlNQyzGbGUC2Q2ln1ghTlEBAs23/yDZyEbtWj+Qo1Isk80CXISs8/
+H4cdM9Xw/Rt5fGxSaNzHJZJ9gK8YFI0z7IDiQp9nWkMqyDhGjhT4ZR847Nz52gcK
+zuqmSK6B7ksumilchQ8hq79VAAvZqQoyVIvLvkbb6pXZbH0qTK5yk0YQVJ49JU1L
+XnB4Iu8IuDxTLmtW2WoCjUZaqQIDAQABo1MwUTAdBgNVHQ4EFgQUhmFk2qHWAU6/
+3u6FyCnk2vaV0fswHwYDVR0jBBgwFoAUhmFk2qHWAU6/3u6FyCnk2vaV0fswDwYD
+VR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAgEAdvryE1xbhpyDjtP+I95Z
+tgmlkmIWTPoHL5WO20SWtWjryHTs0XGXkohqSFKBqYTOVTyRCTtUTF4nWoNfBhlz
+aOExf64UgvYHO4NxcPNjUH2Yx/AKFWBeHx50jfjz/zTSqhAHv8rlYDt6rlLs1aFm
+rNj3DObqmTfDoI8qkdLK8bekjhul6PusmezhW+qa/DMvDRy3moUugpXwzvyG5GRW
+C3+nNbBdCdblUyiEgFu5htH6hSSu2IX5t/ryoKNjAAfUxMKcNFdYCnzWiHKOlrmp
+wYL4YhVQZZYmis8ZIFOQ+BKVQHJcqE5bdrbNbCpurMNODEuDDB/VkbGHEVFVgB0n
+x+ZtaGnfTeJJ6h7IIl+Gnpx0u9k+2pu78cEQ+6ZYKaGUoOKccxgipsSXWL75qHl9
+7/scB3imqRq0Q7/jKP6mvcB3/5irQwVmczsFwELLP0LJdsCZMcQQQsSCGuskzcAJ
+iiiGzRVTfYFUu2hJ5JIgewg+NEzMCwzR5yyWacBcrrDxQTymTNW9NWahHxvdZJHd
+zRd4Y3HNLPikGg37mCYIPWtUxJCU7/lZleNSqlMBhDdbIZcAqaHOQlYJQSZaTMwK
+kWF1y/C6TdCKWyXhAEV8zp/0q4b6vC1ynn/GfopROPXceLbGA+BLG9JEQ1AiGae3
+ejQ40oILyZjEclMPGLYjqoQ=
+-----END CERTIFICATE-----
+'''
+
+# 服务端证书 CN=localhost，故SSL 主机名校验需指向 localhost
+SSL_TARGET_NAME = "localhost"
+
+credentials = grpc.ssl_channel_credentials(_cert)

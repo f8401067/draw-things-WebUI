@@ -127,6 +127,17 @@ def _upgrade_schema(cursor):
         )
     ''')
 
+    # 6. user_notify_config 表 —— 每个用户独立的通知（ntfy）配置
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_notify_config (
+            user_id INTEGER PRIMARY KEY,
+            ntfy_topic TEXT DEFAULT '',
+            ntfy_server TEXT DEFAULT '',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    ''')
+
 
 def init_database():
     """初始化数据库
@@ -1132,5 +1143,44 @@ def save_user_llm_config(user_id, llm_api_url="", llm_model="", llm_api_key=""):
                    llm_api_key = excluded.llm_api_key,
                    updated_at = CURRENT_TIMESTAMP""",
             (user_id, llm_api_url, llm_model, llm_api_key),
+        )
+        return True
+
+
+# =============================================================================
+# 通知配置（ntfy，按用户存储）
+# =============================================================================
+
+def get_user_notify_config(user_id):
+    """获取用户的 ntfy 通知配置。如果没有，返回空 dict。"""
+    if not user_id:
+        return {}
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT ntfy_topic, ntfy_server FROM user_notify_config WHERE user_id = ?",
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        if row:
+            return {
+                "ntfy_topic": row["ntfy_topic"] or "",
+                "ntfy_server": row["ntfy_server"] or "",
+            }
+        return {}
+
+
+def save_user_notify_config(user_id, ntfy_topic="", ntfy_server=""):
+    """保存用户的 ntfy 通知配置（UPSERT）。"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO user_notify_config (user_id, ntfy_topic, ntfy_server, updated_at)
+               VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   ntfy_topic = excluded.ntfy_topic,
+                   ntfy_server = excluded.ntfy_server,
+                   updated_at = CURRENT_TIMESTAMP""",
+            (user_id, ntfy_topic, ntfy_server),
         )
         return True

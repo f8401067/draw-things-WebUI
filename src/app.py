@@ -72,6 +72,24 @@ try:
 except ModuleNotFoundError:
     from presets_routes import bp as presets_bp
 
+# 导入 ntfy 通知模块
+try:
+    from src import notify as notify_module
+except ModuleNotFoundError:
+    try:
+        from . import notify as notify_module
+    except ImportError:
+        import notify as notify_module
+
+# 导入后端通道抽象（统一 HTTP / gRPC，支持自动降级）
+try:
+    from src import backend as backend
+except ModuleNotFoundError:
+    try:
+        from . import backend as backend
+    except ImportError:
+        import backend as backend
+
 # 创建 Flask 应用实例
 # 静态文件目录在项目根目录的 static 文件夹
 import os as _os
@@ -89,6 +107,44 @@ SESSION_LIFETIME_DAYS = 30
 import threading
 generating_count = 0
 count_lock = threading.Lock()
+
+# ===== 生图实时进度（仅 gRPC 通道有；供前端轮询）=====
+# task_id -> {"available", "stage", "step", "total", "updated_at"}
+_generation_progress = {}
+_progress_lock = threading.Lock()
+
+
+def _progress_init(task_id):
+    """生成开始时初始化进度条目（available=False，等 gRPC 首个事件置 True）"""
+    if not task_id:
+        return
+    with _progress_lock:
+        _generation_progress[task_id] = {
+            "available": False, "stage": None, "step": 0, "total": 0,
+            "updated_at": time.time(),
+        }
+
+
+def _progress_update(task_id, stage, step, total):
+    """gRPC 进度回调：写入最新进度"""
+    if not task_id:
+        return
+    with _progress_lock:
+        _generation_progress[task_id] = {
+            "available": True, "stage": stage,
+            "step": int(step), "total": int(total),
+            "updated_at": time.time(),
+        }
+
+
+def _progress_get(task_id):
+    """读取进度（顺手清理 60s 前的过期条目）"""
+    with _progress_lock:
+        now = time.time()
+        for k in [k for k, v in _generation_progress.items()
+                  if now - v.get("updated_at", 0) > 60]:
+            _generation_progress.pop(k, None)
+        return dict(_generation_progress.get(task_id) or {"available": False})
 
 # 启动定期清理任务
 def start_cleanup_scheduler(interval_hours=24):
@@ -224,6 +280,76 @@ CONFIG_FILE = str(get_config_file_path())
 # DrawThings 服务默认地址
 DEFAULT_DRAWTHINGS_URL = "http://127.0.0.1:7888"
 
+# 后端生图通道：auto（优先 gRPC，失败降级 HTTP）| grpc | http
+# 改 config.json 里的 "drawthings_channel" 即可随时切换，无需重启
+DRAWTHINGS_CHANNEL = "auto"
+
+
+def load_channel():
+    """从 config.json 读取当前生图通道
+
+    每次生图前调用，因此改完 config.json 立刻生效（无需重启服务）。
+
+    Returns:
+        str: "auto" | "grpc" | "http"
+    """
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                ch = config.get("drawthings_channel", "auto")
+                if ch in ("auto", "grpc", "http"):
+                    return ch
+        except (json.JSONDecodeError, IOError):
+            pass
+    return "auto"
+
+
+def load_default_model():
+    """从 config.json 读取默认生图模型（应为服务端真实存在的模型文件名）
+
+    Returns:
+        str: 模型文件名；未配置返回空串
+    """
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f).get("default_model") or ""
+        except (json.JSONDecodeError, IOError):
+            pass
+    return ""
+
+
+def init_backend():
+    """根据 config.json 初始化 backend 的 gRPC 连接参数
+
+    读取 "grpc" 段（port / use_tls / shared_secret）。同时把 IMAGES_DIR
+    注入 backend，供图生图路径定位源图。
+    """
+    global DRAWTHINGS_CHANNEL
+    DRAWTHINGS_CHANNEL = load_channel()
+
+    config = {}
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            config = {}
+
+    grpc_cfg = config.get("grpc", {}) or {}
+
+    backend.configure(
+        grpc_port=grpc_cfg.get("port", 7888),
+        use_tls=grpc_cfg.get("use_tls", True),
+        shared_secret=grpc_cfg.get("shared_secret", "") or None,
+        default_model=config.get("default_model"),
+    )
+    # 让 backend 知道生成图目录（图生图时定位源图用）
+    backend.IMAGES_DIR = IMAGES_DIR
+    print(f"[backend] 通道={DRAWTHINGS_CHANNEL}, gRPC port={grpc_cfg.get('port', 7888)}, "
+          f"tls={grpc_cfg.get('use_tls', True)}, 默认模型={config.get('default_model')}")
+
 
 def get_user_id():
     """从 session 或请求头中获取用户 ID。
@@ -247,6 +373,27 @@ def get_user_id():
 
     # 如果没有提供用户 ID，自动创建或获取一个
     return get_or_create_user()
+
+
+def _get_session_user_id():
+    """仅从已登录会话中获取用户 ID，不自动创建匿名用户
+
+    与 get_user_id 的区别：未登录时返回 None 而不是新建匿名用户。
+    用于用户私有配置的读写接口，避免未登录请求污染匿名用户数据。
+
+    Returns:
+        int | None: 用户 ID，未登录返回 None
+    """
+    user = getattr(request, 'current_user', None)
+    if user:
+        return user.get("id")
+    session_uid = session.get("user_id")
+    if session_uid:
+        try:
+            return int(session_uid)
+        except (ValueError, TypeError):
+            return None
+    return None
 
 
 def load_timing_stats():
@@ -543,6 +690,35 @@ def check_status():
     Returns:
         Response: JSON 响应，包含 success、prompt、model 字段
     """
+    # 通道感知：gRPC 模式（或 auto 且 gRPC 可用）时，7888 是纯 gRPC 端口，
+    # 任何明文 HTTP 请求都会被以 415（Unsupported Media Type）拒绝，
+    # 不能再用 HTTP 探测判断可用性（否则误报"服务器连接失败"）。
+    channel = load_channel()
+    if channel in ("grpc", "auto"):
+        # 冷启动首次握手可能较慢，给两次机会，避免误报连接失败
+        grpc_ok = False
+        for _attempt in range(2):
+            try:
+                if backend.is_grpc_available(force_check=True):
+                    grpc_ok = True
+                    break
+            except Exception:
+                pass
+        if grpc_ok:
+            # 注意：gRPC 没有 HTTP options 那样的「当前画布模型」概念，
+            # model 留空，避免把可选模型列表误当成当前模型。
+            return jsonify({
+                "success": True,
+                "prompt": "",
+                "model": "",
+                "raw_data": {"channel": "grpc", "note": "gRPC 通道可用"},
+            })
+        if channel == "grpc":
+            return jsonify({
+                "success": False,
+                "error": "gRPC 通道不可用，请检查 Draw Things 的 gRPC 服务与端口",
+            }), 500
+
     drawthings_url = load_config().rstrip("/")
     # DrawThings 仅暴露 sdapi/v1/options 作为 GET 端点（其它 sdapi 端点对 GET 404）
     # 但 DrawThings 处于"正在生成"状态时 options 端点会被占用、不返回 200，
@@ -570,6 +746,8 @@ def check_status():
                         "success": True,
                         "prompt": data.get("prompt", ""),
                         "model": data.get("model", ""),
+                        "upscaler": data.get("upscaler", ""),
+                        "loras": data.get("loras", []),
                         "raw_data": data,
                     })
                 else:
@@ -710,36 +888,33 @@ def generate_image():
         except Exception as e:
             print(f"启动NSFW检测失败: {e}")
         
-        # 转发请求到 DrawThings 服务
-        # 禁用代理以确保 DrawThings（127.0.0.1:7888）能直连
-        no_proxy = {"http": None, "https": None}
-        drawthings_response = requests.post(
-            f"{drawthings_url}/sdapi/v1/txt2img",
-            json=params,
-            timeout=600,  # 10 分钟超时，因为生成可能需要较长时间
-            proxies=no_proxy
+        # 统一通过 backend 模块生成（自动选路：gRPC 优先，失败降级 HTTP）
+        # 通道由 config.json 的 "drawthings_channel" 决定：auto | grpc | http
+        # 改完 config.json 后下一次请求即生效，无需重启服务
+        # 实时进度：gRPC 通道会回调进度，写入 _generation_progress 供前端轮询
+        task_id = request.headers.get("X-Task-Id") or (
+            params.get("task_id") if isinstance(params, dict) else None)
+        _progress_init(task_id)
+
+        def _on_progress(stage, step, total):
+            _progress_update(task_id, stage, step, total)
+
+        gen_result = backend.generate_image_auto(
+            drawthings_url,
+            params,
+            channel=load_channel(),
+            progress_callback=_on_progress if task_id else None,
         )
-
-        if drawthings_response.status_code != 200:
-            raise Exception(f"DrawThings API 返回状态码: {drawthings_response.status_code}")
-
-        # 解析响应
-        result = drawthings_response.json()
-
-        # 提取 base64 图片数据
-        if "images" in result and len(result["images"]) > 0:
-            image_base64 = result["images"][0]
-        elif "data" in result:
-            image_base64 = result["data"]
-        else:
-            raise Exception("响应中没有图片数据")
+        image_data = gen_result["image_data"]
+        seed = gen_result.get("seed", -1)
+        used_channel = gen_result.get("channel", "unknown")
+        image_logger.info(f"生图通道: {used_channel}, seed: {seed}")
 
         # 使用之前生成的timestamp创建文件名并保存图片
         image_filename = f"generated_{timestamp}.png"
         image_path = os.path.join(IMAGES_DIR, image_filename)
 
-        # 解码并保存图片
-        image_data = base64.b64decode(image_base64)
+        # 保存图片（image_data 已是解码后的 PNG 字节）
         with open(image_path, 'wb') as f:
             f.write(image_data)
 
@@ -763,19 +938,6 @@ def generate_image():
                     image_logger.warning(f"更新历史记录缩略图信息失败 - image_id: {timestamp}")
         else:
             image_logger.warning(f"缩略图生成失败 - 时间戳: {timestamp}")
-
-        # 获取 seed 值 - 通过请求 DrawThings 状态接口获取
-        seed = -1
-        try:
-            # 请求 DrawThings 服务状态接口获取实际的 seed
-            # 禁用代理以确保 DrawThings（127.0.0.1:7888）能直连
-            status_response = requests.get(drawthings_url, timeout=10, proxies=no_proxy)
-            if status_response.status_code == 200:
-                status_data = status_response.json()
-                if "seed" in status_data:
-                    seed = status_data["seed"]
-        except Exception as e:
-            print(f"从状态接口获取 seed 时出错: {e}")
         
         # 计算耗时
         elapsed_time = time.time() - start_time
@@ -803,6 +965,24 @@ def generate_image():
                 image_logger.info(f"已更新历史记录 - image_id: {timestamp}, 耗时: {elapsed_time:.2f}秒, Seed: {seed}")
             else:
                 image_logger.warning(f"更新历史记录失败 - image_id: {timestamp}")
+
+        # 推送 ntfy 通知（异步，不阻塞生成响应）
+        if notify_module and user_id:
+            try:
+                base_url = request.host_url.rstrip("/")
+                notify_module.async_notify_generation_done(
+                    user_id=user_id,
+                    prompt=params.get("prompt", ""),
+                    image_filename=image_filename,
+                    width=width,
+                    height=height,
+                    steps=steps,
+                    seed=seed,
+                    elapsed_time=elapsed_time,
+                    base_url=base_url,
+                )
+            except Exception as e:
+                image_logger.warning(f"启动 ntfy 通知失败: {e}")
 
         # 返回图片路径和元数据
         return jsonify({
@@ -894,46 +1074,155 @@ def get_config():
     """获取当前 DrawThings 服务配置
     
     Returns:
-        Response: JSON 响应，包含当前的 drawthings_url
+        Response: JSON 响应，包含当前的 drawthings_url 与通道模式
     """
     drawthings_url = load_config()
     return jsonify({
         "success": True,
-        "drawthings_url": drawthings_url
+        "drawthings_url": drawthings_url,
+        "drawthings_channel": load_channel()
     })
 
 
 @app.route('/api/config', methods=['POST'])
 def update_config():
     """更新 DrawThings 服务配置
-    
-    接收前端提交的新服务地址并保存到配置文件。
-    
+
+    支持保存：
+    - drawthings_url：HTTP 服务地址
+    - drawthings_channel：生图通道（auto | grpc | http）
+    - grpc：{"port", "use_tls", "shared_secret"} gRPC 连接参数
+
+    保存后立即重新初始化 backend，使通道切换即时生效（无需重启）。
+
     Returns:
         Response: JSON 响应，包含操作结果
     """
     try:
         data = request.json
         drawthings_url = data.get("drawthings_url", DEFAULT_DRAWTHINGS_URL)
-        
-        # 保存配置
-        if save_config(drawthings_url):
-            return jsonify({
-                "success": True,
-                "message": "配置保存成功",
-                "drawthings_url": drawthings_url
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "error": "保存配置失败"
-            }), 500
+
+        # 读取现有配置，保留其他配置项
+        config = {}
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+
+        # 更新 HTTP 地址
+        if not drawthings_url.startswith(('http://', 'https://')):
+            drawthings_url = 'http://' + drawthings_url
+        config["drawthings_url"] = drawthings_url
+
+        # 更新生图通道（仅接受合法值）
+        channel = data.get("drawthings_channel")
+        if channel in ("auto", "grpc", "http"):
+            config["drawthings_channel"] = channel
+
+        # 更新 gRPC 连接参数（若存在）
+        grpc_in = data.get("grpc")
+        if isinstance(grpc_in, dict):
+            existing = config.get("grpc", {}) or {}
+            for key in ("port", "use_tls", "shared_secret"):
+                if key in grpc_in:
+                    existing[key] = grpc_in[key]
+            config["grpc"] = existing
+
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+
+        # 保存后立即重新初始化，使通道/端口切换即时生效
+        init_backend()
+
+        return jsonify({
+            "success": True,
+            "message": "配置保存成功",
+            "drawthings_url": drawthings_url,
+            "drawthings_channel": load_channel()
+        })
     except Exception as e:
         return jsonify({
             "success": False,
             "error": str(e)
         }), 500
 
+
+@app.route('/api/models', methods=['GET'])
+def get_models():
+    """获取可生图模型列表（供前端模型下拉使用）
+
+    模型清单来自 gRPC Echo 的 override.models（仅 gRPC 通道可获取；HTTP 无此能力）。
+    每个条目返回 {file, name}，file 即请求时要传的 model 字段值。
+
+    Returns:
+        Response: JSON，含 models 列表与 default（config 里的 default_model）
+    """
+    models = []
+    error = None
+
+    def _item(f, name):
+        it = {"file": f, "name": name}
+        rec = backend.get_model_recommended(f)
+        if rec:
+            it["recommended"] = rec
+        return it
+
+    try:
+        info = backend.get_grpc_client().echo(timeout=10)
+        seen = set()
+
+        # 1) 官方模型定义（override.models，带可读 name）
+        raw = (info.get("override") or {}).get("models") or []
+        for m in raw:
+            if isinstance(m, dict) and m.get("file"):
+                f = m["file"]
+                seen.add(f)
+                models.append(_item(f, m.get("name") or f))
+            elif isinstance(m, str) and m:
+                seen.add(m)
+                models.append(_item(m, m))
+
+        # 2) 补充实际存在、但未被官方定义收录的模型文件。
+        #    过滤掉 VAE / text encoder / LoRA / 放大器 / 视频模型等非文生图文件。
+        dep_hints = ("vae", "clip", "lora", "upscaler", "realesrgan",
+                     "text_encoder", "instruct", "encoder", "ltx", "t5")
+        for f in (info.get("files") or []):
+            fl = str(f).lower()
+            if not (fl.endswith(".ckpt") or fl.endswith(".safetensors")):
+                continue
+            if f in seen or any(d in fl for d in dep_hints):
+                continue
+            seen.add(f)
+            models.append(_item(f, f))
+    except Exception as e:
+        error = str(e)[:200]
+
+    return jsonify({
+        "success": True,
+        "models": models,
+        "samplers": backend.list_samplers(),
+        "default": load_default_model(),
+        "channel": load_channel(),
+        "error": error,
+    })
+
+
+@app.route('/api/generate/progress', methods=['GET'])
+def get_generation_progress():
+    """查询某次生图的实时进度（前端在生成期间轮询）
+
+    仅 gRPC 通道有真实进度；HTTP 通道 available 恒为 False（前端据此回退模拟进度）。
+
+    Query:
+        task_id (str): 前端生成请求时通过 X-Task-Id 头/body 传入的 id
+
+    Returns:
+        Response: {"available": bool, "stage": str|None, "step": int, "total": int}
+    """
+    task_id = request.args.get("task_id", "")
+    return jsonify(_progress_get(task_id))
 
 
 @app.route('/api/status/generating', methods=['GET'])
@@ -1101,6 +1390,88 @@ def update_refine_config():
         }), 500
 
 
+@app.route('/api/notify_config', methods=['GET'])
+def get_notify_config():
+    """获取 ntfy 通知配置
+
+    Returns:
+        Response: JSON 响应，包含当前用户保存的主题和服务器地址
+    """
+    if not notify_module:
+        return jsonify({"success": False, "error": "通知模块未加载"}), 500
+
+    user_id = _get_session_user_id()
+    cfg = notify_module.get_user_notify_config(user_id)
+    return jsonify({
+        "success": True,
+        "config": {
+            "ntfy_topic": cfg.get("ntfy_topic", ""),
+            "ntfy_server": cfg.get("ntfy_server", ""),
+            "default_server": notify_module.DEFAULT_NTFY_SERVER,
+        }
+    })
+
+
+@app.route('/api/notify_config', methods=['POST'])
+def update_notify_config():
+    """保存 ntfy 通知配置（每个用户独立）"""
+    if not notify_module:
+        return jsonify({"success": False, "error": "通知模块未加载"}), 500
+
+    try:
+        data = request.json or {}
+        user_id = _get_session_user_id()
+        if not user_id:
+            return jsonify({"success": False, "error": "请先登录"}), 401
+
+        topic = (data.get("ntfy_topic") or "").strip().lstrip("/")
+        server = (data.get("ntfy_server") or "").strip().rstrip("/")
+
+        try:
+            from src.database import save_user_notify_config
+        except ModuleNotFoundError:
+            from database import save_user_notify_config
+        save_user_notify_config(user_id, topic, server)
+
+        return jsonify({"success": True, "message": "通知配置保存成功"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/notify_test', methods=['POST'])
+def send_test_notify():
+    """发送一条测试 ntfy 通知"""
+    if not notify_module:
+        return jsonify({"success": False, "error": "通知模块未加载"}), 500
+
+    try:
+        data = request.json or {}
+        user_id = _get_session_user_id()
+        if not user_id:
+            return jsonify({"success": False, "error": "请先登录"}), 401
+
+        topic = (data.get("ntfy_topic") or "").strip().lstrip("/")
+        if not topic:
+            return jsonify({"success": False, "error": "请先填写推送主题"}), 400
+
+        # 主题与服务器以刚保存的配置为准（保存后立即测试）
+        try:
+            from src.database import save_user_notify_config
+        except ModuleNotFoundError:
+            from database import save_user_notify_config
+        server = (data.get("ntfy_server") or "").strip().rstrip("/")
+        save_user_notify_config(user_id, topic, server)
+
+        result = notify_module.test_notify(user_id, topic)
+        return jsonify(result if "error" in result else {
+            "success": result.get("success", False),
+            "message": result.get("message", ""),
+            "error": result.get("error", ""),
+        }), (200 if result.get("success") else 500)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route('/api/app_config', methods=['GET'])
 def get_app_config():
     """获取应用配置（端口、主机等）
@@ -1226,6 +1597,12 @@ except Exception as e:
     print(f"⚠️  清理不完整记录时出错: {e}")
 
 
+# 模块被直接运行或被 WSGI 服务器（gunicorn/uWSGI）导入时都初始化一次后端通道
+try:
+    init_backend()
+except Exception as _e:
+    print(f"⚠️ 初始化 backend 失败（生图将仅能用 HTTP）: {_e}")
+
 if __name__ == '__main__':
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='DrawThings WebUI 服务器')
@@ -1241,5 +1618,8 @@ if __name__ == '__main__':
     
     # 启动定期清理任务
     start_cleanup_scheduler(interval_hours=24)
-    
+
+    # 初始化后端生图通道（读取 config.json 的 grpc / drawthings_channel）
+    init_backend()
+
     app.run(host=args.host, port=args.port, debug=args.debug)

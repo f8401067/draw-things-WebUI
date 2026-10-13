@@ -2,3 +2,11 @@ flask==3.0.0
 requests==2.31.0
 flask-cors==4.0.0
 Pillow>=10.0.0
+
+# gRPC 通道（Draw Things 服务端协议）
+grpcio==1.68.1
+grpcio-tools==1.68.1
+protobuf==5.28.3
+flatbuffers==24.3.25
+numpy>=1.26
+fpzip>=0.2.0

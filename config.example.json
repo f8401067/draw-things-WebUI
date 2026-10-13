@@ -7,6 +7,18 @@
   "llm_api_url": "",
   "llm_model": "",
   "llm_api_key": "",
+  "ntfy_server": "",
+
+  "drawthings_channel": "auto",
+  "_drawthings_channel_note": "auto | grpc | http —— grpc 优先，不可用时降级 http",
+
+  "grpc": {
+    "port": 7888,
+    "use_tls": true,
+    "shared_secret": "",
+    "_note": "shared_secret 填 Draw Things 设置里的共享密钥，无需手动去空格"
+  },
+
   "thumbnail": {
     "max_size": [300, 300],
     "quality": 85,

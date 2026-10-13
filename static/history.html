@@ -34,7 +34,7 @@
 
         .page-header h1 {
             color: white;
-            font-size: 2em;
+            font-size: 1.3em;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
             display: flex;
             align-items: baseline;
@@ -1573,16 +1573,21 @@
             }
         }
 
+        // Track generating image IDs for incremental refresh
+        let generatingImageIds = new Set();
+        
         // Load history
-        async function loadHistory() {
+        async function loadHistory(refreshMode = false) {
             // Save current scroll position before loading
             const scrollPosition = window.pageYOffset || document.documentElement.scrollTop;
             
             try {
-                // 先显示加载状态，隐藏其他内容
-                document.getElementById('loadingState').style.display = 'block';
-                document.getElementById('historyGrid').style.display = 'none';
-                document.getElementById('emptyState').style.display = 'none';
+                // 非刷新模式才显示加载状态
+                if (!refreshMode) {
+                    document.getElementById('loadingState').style.display = 'block';
+                    document.getElementById('historyGrid').style.display = 'none';
+                    document.getElementById('emptyState').style.display = 'none';
+                }
                 
                 // 构建 URL
                 let url = `${API_BASE}/api/history?`;
@@ -1627,30 +1632,95 @@
                 document.getElementById('loadingState').style.display = 'none';
 
                 if (data.success && data.history && data.history.length > 0) {
-                    renderHistory(data.history);
-                    document.getElementById('historyGrid').style.display = 'block';
-                    
-                    // Restore scroll position after rendering
-                    window.scrollTo(0, scrollPosition);
+                    // 刷新模式：增量更新正在生成的卡片，不重建整个网格
+                    if (refreshMode) {
+                        incrementalUpdateHistory(data.history);
+                    } else {
+                        renderHistory(data.history);
+                        document.getElementById('historyGrid').style.display = 'block';
+                        // Restore scroll position after rendering
+                        window.scrollTo(0, scrollPosition);
+                    }
                     
                     // Check if there are any generating items and set up auto-refresh
-                    const hasGeneratingItems = data.history.some(item => !item.elapsed_time || item.elapsed_time === 0);
-                    if (hasGeneratingItems) {
+                    const newGeneratingIds = new Set();
+                    data.history.forEach(item => {
+                        if (!item.elapsed_time || item.elapsed_time === 0) {
+                            const imageId = item.image_id || item.id;
+                            newGeneratingIds.add(imageId);
+                        }
+                    });
+                    
+                    if (newGeneratingIds.size > 0) {
+                        generatingImageIds = newGeneratingIds;
                         setupAutoRefresh();
                     } else {
+                        generatingImageIds.clear();
                         clearAutoRefresh();
                     }
                 } else {
-                    document.getElementById('emptyState').style.display = 'block';
+                    if (!refreshMode) {
+                        document.getElementById('emptyState').style.display = 'block';
+                    }
+                    generatingImageIds.clear();
                     clearAutoRefresh();
                 }
             } catch (error) {
                 console.error('Failed to load history:', error);
-                document.getElementById('loadingState').style.display = 'none';
-                document.getElementById('historyGrid').style.display = 'none';
-                document.getElementById('emptyState').style.display = 'block';
+                if (!refreshMode) {
+                    document.getElementById('loadingState').style.display = 'none';
+                    document.getElementById('historyGrid').style.display = 'none';
+                    document.getElementById('emptyState').style.display = 'block';
+                }
                 showToast('加载历史记录失败: ' + error.message);
                 clearAutoRefresh();
+            }
+        }
+        
+        // 增量更新：只更新从"生成中"变为"已完成"的卡片
+        function incrementalUpdateHistory(historyData) {
+            const grid = document.getElementById('historyGrid');
+            const newGeneratingIds = new Set();
+            let hasNewCompleteItem = false;
+            
+            historyData.forEach(item => {
+                const imageId = item.image_id || item.id;
+                const isGenerating = !item.elapsed_time || item.elapsed_time === 0;
+                
+                if (isGenerating) {
+                    newGeneratingIds.add(imageId);
+                } else if (generatingImageIds.has(imageId)) {
+                    // 这个条目之前是生成中，现在完成了，更新它
+                    updateHistoryItem(imageId, item);
+                    hasNewCompleteItem = true;
+                }
+            });
+            
+            // 如果之前有生成中但现在数据里已经没有这个ID了（被筛选掉了），不做处理
+        }
+        
+        // 更新单个历史卡片
+        function updateHistoryItem(imageId, item) {
+            const existingItem = document.querySelector(`.history-item[data-image-id="${imageId}"]`);
+            if (!existingItem) return;
+            
+            // 用新的图片内容替换加载动画
+            const imageContainer = existingItem.querySelector('.history-item-loading');
+            if (imageContainer) {
+                const thumbnailUrl = item.thumbnail_url || item.image_url;
+                const fullImageUrl = item.image_url;
+                const img = document.createElement('img');
+                img.src = thumbnailUrl;
+                img.alt = 'Generated Image';
+                img.loading = 'lazy';
+                img.onclick = function() { openImage(fullImageUrl); };
+                imageContainer.parentNode.replaceChild(img, imageContainer);
+            }
+            
+            // 更新耗时
+            const elapsedEl = existingItem.querySelector('.elapsed-time');
+            if (elapsedEl) {
+                elapsedEl.textContent = formatElapsedTime(item.elapsed_time);
             }
         }
 
@@ -1661,9 +1731,9 @@
             // Clear existing timer if any
             clearAutoRefresh();
             
-            // Set up new timer to refresh every 3 seconds
+            // Set up new timer to refresh every 3 seconds (增量刷新模式)
             autoRefreshTimer = setInterval(() => {
-                loadHistory();
+                loadHistory(true);
             }, 3000);
         }
         
@@ -1705,17 +1775,18 @@
                 }
                 
                 return `
-                    <div class="history-item">
+                    <div class="history-item" data-image-id="${imageId}">
                         ${imageContent}
                         <button class="${nsfwBtnClass}" onclick="event.stopPropagation(); toggleNsfw('${imageId}')" title="${isNsfw ? '取消NSFW标记' : '标记为NSFW'}">${nsfwIcon}</button>
                         <div class="history-item-info">
                             <div class="history-item-prompt" 
-                                 onmouseenter="showPromptTooltip(this, '${escapedPrompt.replace(/'/g, "\\'")}')" 
+                                 onmouseenter="showPromptTooltip(this)" 
                                  onmouseleave="hidePromptTooltip()"
-                                 onclick="event.stopPropagation(); copyToClipboard('${escapeHtml(item.prompt || '无提示词')}', '提示词')">${escapedPrompt}</div>
+                                 title="点击复制提示词"
+                                 onclick="event.stopPropagation(); copyText(this, '提示词')">${escapedPrompt}</div>
                             <div class="history-item-meta">
                                 <span>${item.width}x${item.height}</span>
-                                <span>Seed: <span class="seed-value" onclick="event.stopPropagation(); copyToClipboard('${item.seed}', 'Seed')">${item.seed}</span></span>
+                                <span>Seed: <span class="seed-value" onclick="event.stopPropagation(); copyText(this, 'Seed')">${item.seed}</span></span>
                             </div>
                             <div class="rating-container">
                                 ${starsHtml}
@@ -1777,6 +1848,12 @@
             window.open(imageUrl, '_blank');
         }
 
+        // 从元素的文本内容复制（避免把任意含引号/换行的提示词内联进 onclick 而破坏 JS）
+        function copyText(element, label) {
+            if (!element) return;
+            copyToClipboard(element.textContent || '', label);
+        }
+
         // Copy to clipboard
         async function copyToClipboard(text, label) {
             try {
@@ -1797,8 +1874,9 @@
         // Show/Hide prompt tooltip
         let currentPromptElement = null;
         
-        function showPromptTooltip(element, prompt) {
+        function showPromptTooltip(element) {
             const tooltip = document.getElementById('promptTooltip');
+            const prompt = element ? (element.textContent || '') : '';
             if (!tooltip || !prompt) return;
             
             currentPromptElement = element;

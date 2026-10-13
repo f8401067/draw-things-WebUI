@@ -35,7 +35,7 @@
             text-align: left;
             color: white;
             margin: 0;
-            font-size: 2em;
+            font-size: 1.3em;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
             display: flex;
             align-items: baseline;
@@ -90,18 +90,18 @@
         }
 
         .status-info {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
             margin-top: 8px;
         }
 
         .status-item {
-            flex: 1;
-            min-width: 150px;
             padding: 6px;
             background: #f5f5f5;
             border-radius: 6px;
+            font-size: 0.8em;
+            overflow: hidden;
         }
 
         .status-item label {
@@ -117,6 +117,20 @@
             color: #333;
             word-break: break-word;
             font-weight: 600;
+        }
+
+        .status-item .status-select {
+            display: inline-block;
+            margin-left: 8px;
+            max-width: calc(100% - 88px);
+            padding: 4px 6px;
+            font-size: 0.95em;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            background: #fff;
+            color: #333;
+            cursor: pointer;
+            vertical-align: middle;
         }
 
         .form-panel {
@@ -153,9 +167,15 @@
 
         .form-group input:focus,
         .form-group textarea:focus,
-        .form-group select:focus {
+        .form-group select:focus,
+        .form-group input[type="number"]:focus {
             outline: none;
             border-color: #667eea;
+        }
+
+        /* 步数输入框：保留下拉箭头但允许自由输入 */
+        .form-group input[type="number"][list] {
+            cursor: pointer;
         }
 
         .form-group textarea {
@@ -883,6 +903,29 @@
             transform: translateY(0);
         }
 
+        .paste-prompt-btn {
+            background: linear-gradient(135deg, #26c6da 0%, #00acc1 100%);
+            border: none;
+            border-radius: 6px;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            color: white;
+            transition: all 0.3s;
+            box-shadow: 0 2px 6px rgba(38, 198, 218, 0.3);
+        }
+
+        .paste-prompt-btn:hover {
+            background: linear-gradient(135deg, #00acc1 0%, #00838f 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(38, 198, 218, 0.4);
+        }
+
+        .paste-prompt-btn:active {
+            transform: translateY(0);
+        }
+
         .undo-btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border: none;
@@ -1173,6 +1216,7 @@
                 <div class="textarea-wrapper">
                     <div style="margin-bottom: 8px; display: flex; gap: 8px; align-items: center;">
                         <button class="insert-prompt-btn" onclick="openPresetModal()">📋 插入常用提示词</button>
+                        <button class="paste-prompt-btn" onclick="pasteFromClipboard()" title="把剪贴板文字粘贴到输入框">📥 粘贴</button>
                         <button id="undoBtn" class="undo-btn" onclick="undoInsert()">↩️ 撤回</button>
                     </div>
                     <textarea id="prompt" placeholder="输入正面提示词..."></textarea>
@@ -1191,26 +1235,34 @@
                     <select id="sizePreset">
                         <option value="256x256">256 x 256 (1:1 适合测试)</option>
                         <option value="512x512" selected>512 x 512 (1:1)</option>
-                        <option value="512x768">512 x 768 (2:3)</option>
-                        <option value="768x512">768 x 512 (3:2)</option>
                         <option value="768x768">768 x 768 (1:1)</option>
-                        <option value="768x1024">768 x 1024 (3:4)</option>
-                        <option value="1024x768">1024 x 768 (4:3)</option>
                         <option value="1024x1024">1024 x 1024 (1:1)</option>
-                        <option value="576x1024">576 x 1024 (9:16 手机竖屏)</option>
+                        <option value="1536x1536">1536 x 1536 (1:1)</option>
+                        <option value="512x768">512 x 768 (2:3)</option>
+                        <option value="1024x1536">1024 x 1536 (2:3)</option>
+                        <option value="768x512">768 x 512 (3:2)</option>
+                        <option value="1536x1024">1536 x 1024 (3:2)</option>
+                        <option value="768x1024">768 x 1024 (3:4)</option>
+                        <option value="1152x1536">1152 x 1536 (3:4)</option>
+                        <option value="1024x768">1024 x 768 (4:3)</option>
+                        <option value="1536x1152">1536 x 1152 (4:3)</option>
+                        <option value="540x960">540 x 960 (9:16 qHD)</option>
+                        <option value="576x1024">576 x 1024 (9:16)</option>
                         <option value="640x1136">640 x 1136 (9:16 iPhone)</option>
                         <option value="720x1280">720 x 1280 (9:16 HD)</option>
-                        <option value="1080x1920">1080 x 1920 (9:16 FHD)</option>
-                        <option value="540x960">540 x 960 (9:16 qHD)</option>
                         <option value="768x1366">768 x 1366 (9:16 iPad)</option>
+                        <option value="1080x1920">1080 x 1920 (9:16 FHD)</option>
+                        <option value="1440x2560">1440 x 2560 (9:16 2K)</option>
                         <option value="512x910">512 x 910 (9:18 超长屏)</option>
                         <option value="576x1152">576 x 1152 (9:18 超长屏)</option>
                         <option value="640x1280">640 x 1280 (9:18 超长屏)</option>
+                        <option value="768x1536">768 x 1536 (9:18 超长屏)</option>
                         <option value="512x1024">512 x 1024 (1:2 超窄屏)</option>
-                        <option value="576x1024">576 x 1024 (9:16 优化)</option>
+                        <option value="768x1536">768 x 1536 (1:2 超窄屏)</option>
+                        <option value="1024x576">1024 x 576 (16:9)</option>
                         <option value="1280x720">1280 x 720 (16:9 横屏)</option>
                         <option value="1920x1080">1920 x 1080 (16:9 FHD 横屏)</option>
-                        <option value="1024x576">1024 x 576 (16:9)</option>
+                        <option value="2560x1440">2560 x 1440 (16:9 2K)</option>
                     </select>
                 </div>
 
@@ -1221,13 +1273,17 @@
 
                 <div class="form-group">
                     <label for="steps">步数 (Steps)</label>
-                    <select id="steps">
-                        <option value="8" selected>8</option>
-                        <option value="9">9</option>
-                        <option value="10">10</option>
-                        <option value="11">11</option>
-                        <option value="12">12</option>
-                    </select>
+                    <input type="number" id="steps" value="8" min="1" max="100" step="1" list="stepsOptions" placeholder="可下拉选择或直接输入">
+                    <datalist id="stepsOptions">
+                        <option value="8"></option>
+                        <option value="9"></option>
+                        <option value="10"></option>
+                        <option value="11"></option>
+                        <option value="12"></option>
+                        <option value="20"></option>
+                        <option value="30"></option>
+                        <option value="40"></option>
+                    </datalist>
                 </div>
             </div>
 
@@ -1238,8 +1294,13 @@
                 </div>
             </div>
 
-            <div style="display: flex; gap: 10px; align-items: center;">
-                <button id="generateBtn" class="btn btn-primary" style="flex: 0 0 auto; min-width: 120px;"><span>生成图片</span></button>
+            <div style="display: flex; gap: 10px; align-items: center; flex-direction: column;">
+                <button id="notifyConfigBtn" class="btn btn-secondary" style="width: 100%;" onclick="openNotifyConfigModal()" title="配置生图完成后的 ntfy 推送">
+                    <span>🔔 通知配置</span>
+                </button>
+                <div style="display: flex; gap: 10px; align-items: center; width: 100%;">
+                    <button id="generateBtn" class="btn btn-primary" style="flex: 0 0 auto; min-width: 120px;"><span>生成图片</span></button>
+                </div>
             </div>
         </div>
 
@@ -1334,6 +1395,35 @@
         </div>
     </div>
 
+    <!-- ntfy Notify Config Modal -->
+    <div id="notifyConfigModal" class="config-modal">
+        <div class="config-modal-content">
+            <h3>🔔 通知配置 (ntfy)</h3>
+            <p style="font-size: 13px; color: #666; margin-bottom: 15px;">
+                图片生成完成后会向 ntfy 推送一条通知。留空主题则不推送。每个用户的配置独立保存。
+            </p>
+            <div class="config-form-group">
+                <label for="ntfyTopic">推送主题 (Topic)</label>
+                <input type="text" id="ntfyTopic" placeholder="例如: drawthings_my_pc">
+                <span style="font-size: 12px; color: #888; margin-top: 4px; display: inline-block;">
+                    在手机 ntfy App 订阅该主题即可收到推送。主题公开可见，请勿使用敏感名称。
+                </span>
+            </div>
+            <div class="config-form-group">
+                <label for="ntfyServer">服务器地址</label>
+                <input type="text" id="ntfyServer" placeholder="https://ntfy.sh">
+                <span style="font-size: 12px; color: #888; margin-top: 4px; display: inline-block;">
+                    留空则使用官方默认服务器 ntfy.sh。
+                </span>
+            </div>
+            <div class="config-buttons">
+                <button class="btn-config btn-config-secondary" onclick="closeNotifyConfigModal()">取消</button>
+                <button class="btn-config btn-config-secondary" onclick="testNotifyConfig()">发送测试</button>
+                <button class="btn-config btn-config-primary" onclick="saveNotifyConfig()">保存配置</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Prompt Preset Modal -->
     <div id="presetModal" class="preset-modal">
         <div class="preset-modal-content">
@@ -1373,6 +1463,7 @@
             </div>
             <div style="margin-bottom: 15px; display: flex; gap: 8px; align-items: center;">
                 <button class="insert-prompt-btn" onclick="openPresetModalFromFullscreen()">📋 插入常用提示词</button>
+                <button class="paste-prompt-btn" onclick="pasteFromClipboard('promptFullscreenTextarea')" title="把剪贴板文字粘贴到输入框">📥 粘贴</button>
                 <button id="undoBtnFullscreen" class="undo-btn" onclick="undoInsert()">↩️ 撤回</button>
             </div>
             <textarea id="promptFullscreenTextarea" class="prompt-fullscreen-textarea" placeholder="输入正面提示词..."></textarea>
@@ -1479,7 +1570,7 @@
         let authTabMode = 'login'; // 'login' | 'register'
 
         // 用 session-cookie 模式取 user id。优先用 session，session 失效再退回 localStorage 的 X-User-ID 兼容老逻辑。
-        function getFetchOptions(method = 'GET', body = null) {
+        function getFetchOptions(method = 'GET', body = null, extraHeaders = null) {
             const options = {
                 method: method,
                 headers: {},
@@ -1490,6 +1581,9 @@
                 options.headers['X-User-ID'] = currentUser.id;
             } else if (legacyUserId) {
                 options.headers['X-User-ID'] = legacyUserId;
+            }
+            if (extraHeaders) {
+                Object.assign(options.headers, extraHeaders);
             }
             if (body) {
                 options.headers['Content-Type'] = 'application/json';
@@ -1692,6 +1786,7 @@
             initialized = true;
             checkServerStatus();
             loadSavedValues();
+            loadModels();
             loadPresets();
         }
 
@@ -1743,15 +1838,32 @@
                         `;
                     }
                     statusPanel.innerHTML = `
-                        <h3>✓ 服务器连接成功</h3>
                         <div class="status-info">
                             <div class="status-item">
                                 <label>当前模型:</label>
-                                <value>${escapeHtml(data.model || '未知')}</value>
+                                <select id="modelSelect" class="status-select" onchange="onModelChange()">
+                                    <option value="">加载中…</option>
+                                </select>
+                            </div>
+                            <div class="status-item">
+                                <label>采样器:</label>
+                                <select id="samplerSelect" class="status-select" onchange="saveValues()">
+                                    <option value="">-</option>
+                                </select>
+                            </div>
+                            <div class="status-item">
+                                <label>放大器:</label>
+                                <value>${escapeHtml(data.upscaler || '未设置')}</value>
+                            </div>
+                            <div class="status-item">
+                                <label>LoRA:</label>
+                                <value>${renderLoras(data.loras)}</value>
                             </div>
                         </div>
                         ${generatingHtml}
                     `;
+                    fillModelSelect();    // 填充「当前模型」下拉（模型列表已加载时生效）
+                    fillSamplerSelect();  // 填充「采样器」下拉
                     formPanel.classList.remove('hidden');
                     
                     // Start periodic update of generating count
@@ -1873,9 +1985,25 @@
                 steps: steps
             };
 
+            // 模型选择（空则不传，由后端用 default_model 兜底）
+            const modelEl = document.getElementById('modelSelect');
+            if (modelEl && modelEl.value) {
+                params.model = modelEl.value;
+            }
+            // 采样器（传名称字符串，后端转枚举）
+            const samplerEl = document.getElementById('samplerSelect');
+            if (samplerEl && samplerEl.value) {
+                params.sampler = samplerEl.value;
+            }
+
             // Validate
             if (!params.prompt) {
                 alert('请输入提示词');
+                return;
+            }
+
+            if (steps < 1 || steps > 100) {
+                alert('步数需在 1 - 100 之间');
                 return;
             }
 
@@ -1919,8 +2047,17 @@
             // Start progress simulation with estimated time
             startProgressSimulation(width, height, steps, estimatedTime);
 
+            // 实时进度：若后端走 gRPC，会返回真实进度；HTTP 通道则回退模拟进度
+            const taskId = (window.crypto && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : ('t' + Date.now() + Math.random().toString(16).slice(2));
+            startProgressPolling(taskId, steps);
+
             try {
-                const response = await fetch(`${API_BASE}/api/generate`, getFetchOptions('POST', params));
+                const response = await fetch(
+                    `${API_BASE}/api/generate`,
+                    getFetchOptions('POST', params, { 'X-Task-Id': taskId })
+                );
 
                 const result = await response.json();
 
@@ -1940,6 +2077,7 @@
             } catch (error) {
                 alert('请求失败: ' + error.message);
             } finally {
+                stopProgressPolling();
                 generateBtn.disabled = false;
                 generateBtn.classList.remove('btn-loading');
                 generateBtn.style.removeProperty('--progress');
@@ -2046,16 +2184,167 @@
             saveValues();
         }
 
+        // 把剪贴板文字粘贴到提示词输入框（有焦点则插到光标处，否则追加到末尾）
+        async function pasteFromClipboard(targetId) {
+            const ta = document.getElementById(targetId || 'prompt');
+            if (!ta) return;
+            let text = '';
+            try {
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                    text = await navigator.clipboard.readText();
+                } else {
+                    throw new Error('clipboard API unavailable');
+                }
+            } catch (e) {
+                // 非安全上下文（如通过局域网 IP 访问）或未授权 → 聚焦并提示手动粘贴
+                ta.focus();
+                showToast('无法直接读取剪贴板，请按 Cmd / Ctrl + V 粘贴');
+                return;
+            }
+            if (!text) {
+                ta.focus();
+                showToast('剪贴板为空');
+                return;
+            }
+            const focused = (document.activeElement === ta);
+            const start = focused ? ta.selectionStart : ta.value.length;
+            const end = focused ? ta.selectionEnd : ta.value.length;
+            ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+            const pos = start + text.length;
+            ta.focus();
+            ta.setSelectionRange(pos, pos);
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            if (typeof saveValues === 'function') saveValues();
+            showToast('已粘贴到输入框');
+        }
+
         // Save values to localStorage
         function saveValues() {
+            const modelEl = document.getElementById('modelSelect');
+            const samplerEl = document.getElementById('samplerSelect');
             const values = {
                 prompt: document.getElementById('prompt').value,
                 seed: document.getElementById('seed').value,
                 steps: document.getElementById('steps').value,
                 sizePreset: document.getElementById('sizePreset').value,
-                negativePrompt: document.getElementById('negativePrompt').value
+                negativePrompt: document.getElementById('negativePrompt').value,
+                model: modelEl ? modelEl.value : '',
+                sampler: samplerEl ? samplerEl.value : ''
             };
             localStorage.setItem('drawthings_values', JSON.stringify(values));
+        }
+
+        // 列表缓存（状态面板会重建，下拉需反复填充）
+        let modelCache = [];
+        let modelDefault = '';
+        let samplerCache = [];
+
+        // 从后端加载可选模型列表（gRPC echo 的模型清单）+ 采样器列表
+        async function loadModels() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/models`);
+                const data = await resp.json();
+                modelCache = (data && data.models) || [];
+                modelDefault = (data && data.default) || '';
+                samplerCache = (data && data.samplers) || [];
+                fillModelSelect();
+                fillSamplerSelect();
+            } catch (e) {
+                console.error('加载模型列表失败:', e);
+            }
+        }
+
+        // 填充「当前模型」下拉（状态面板每次重建后调用）
+        function fillModelSelect() {
+            const sel = document.getElementById('modelSelect');
+            if (!sel) return;
+            sel.innerHTML = '';
+            if (modelCache.length === 0) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = '（未获取到模型列表）';
+                sel.appendChild(opt);
+                return;
+            }
+            modelCache.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.file;
+                opt.textContent = (m.name && m.name !== m.file) ? m.name : m.file;
+                opt.title = m.file;
+                sel.appendChild(opt);
+            });
+            // 选中：上次保存的选择 > 后端默认 > 第一个
+            let current = '';
+            try {
+                const v = JSON.parse(localStorage.getItem('drawthings_values') || '{}');
+                current = v.model || '';
+            } catch (e) { /* ignore */ }
+            if (!current) current = modelDefault;
+            let idx = current ? modelCache.findIndex(m => m.file === current) : -1;
+            sel.selectedIndex = idx >= 0 ? idx : 0;
+        }
+
+        // 填充「采样器」下拉
+        function fillSamplerSelect() {
+            const sel = document.getElementById('samplerSelect');
+            if (!sel) return;
+            sel.innerHTML = '';
+            const list = samplerCache.length ? samplerCache
+                       : ['DPM++ 2M Karras', 'Euler a', 'DDIM', 'DPM++ 2D', 'UniPC'];
+            list.forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = n;
+                opt.textContent = n;
+                sel.appendChild(opt);
+            });
+            // 选中：上次保存的采样器 > 当前模型的推荐采样器 > 第一个
+            let current = '';
+            try {
+                current = JSON.parse(localStorage.getItem('drawthings_values') || '{}').sampler || '';
+            } catch (e) { /* ignore */ }
+            if (!current) {
+                const ms = document.getElementById('modelSelect');
+                const m = (ms && ms.selectedIndex >= 0) ? modelCache[ms.selectedIndex] : null;
+                current = (m && m.recommended && m.recommended.sampler_name) || '';
+            }
+            const idx = current ? list.indexOf(current) : -1;
+            sel.selectedIndex = idx >= 0 ? idx : 0;
+        }
+
+        // 切换模型时：自动套用该模型的推荐参数（步数 / 尺寸 / 采样器）
+        function onModelChange() {
+            const sel = document.getElementById('modelSelect');
+            const f = sel ? sel.value : '';
+            const m = modelCache.find(x => x.file === f);
+            const r = m && m.recommended;
+            if (r) {
+                if (r.steps) document.getElementById('steps').value = r.steps;
+                if (r.min_size) ensureSizeAtLeast(r.min_size);
+                // 采样器切到该模型推荐值
+                const ss = document.getElementById('samplerSelect');
+                if (ss && r.sampler_name) {
+                    const i = Array.from(ss.options).findIndex(o => o.value === r.sampler_name);
+                    if (i >= 0) ss.selectedIndex = i;
+                }
+            }
+            saveValues();
+        }
+
+        // 把图片尺寸预设提升到不小于 minSize（选满足条件的最小预设）
+        function ensureSizeAtLeast(minSize) {
+            const sel = document.getElementById('sizePreset');
+            if (!sel || !minSize) return;
+            const dims = v => String(v).split('x').map(Number);
+            const cur = dims(sel.value);
+            if (Math.min(cur[0], cur[1]) >= minSize) return;
+            let best = null, bestScore = Infinity;
+            for (const opt of sel.options) {
+                const d = dims(opt.value);
+                if (!d[0] || !d[1]) continue;
+                const m = Math.min(d[0], d[1]);
+                if (m >= minSize && m < bestScore) { bestScore = m; best = opt.value; }
+            }
+            if (best) sel.value = best;
         }
 
         // Load saved values from localStorage
@@ -2066,7 +2355,10 @@
                     const values = JSON.parse(saved);
                     if (values.prompt) document.getElementById('prompt').value = values.prompt;
                     if (values.seed) document.getElementById('seed').value = values.seed;
-                    if (values.steps) document.getElementById('steps').value = values.steps;
+                    if (values.steps) {
+                        const savedSteps = parseInt(values.steps, 10);
+                        document.getElementById('steps').value = (savedSteps >= 1 && savedSteps <= 100) ? savedSteps : 8;
+                    }
                     if (values.sizePreset) document.getElementById('sizePreset').value = values.sizePreset;
                     if (values.negativePrompt) document.getElementById('negativePrompt').value = values.negativePrompt;
                 } catch (e) {
@@ -2080,6 +2372,16 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        // Utility: Render LoRA list
+        function renderLoras(loras) {
+            if (!loras || loras.length === 0) return '未设置';
+            return loras.map(lora => {
+                const name = lora.file || '未知';
+                const weight = lora.weight != null ? ` (${lora.weight})` : '';
+                return escapeHtml(name + weight);
+            }).join('<br>');
         }
 
         // Utility: Debounce
@@ -2250,6 +2552,58 @@
             }
         }
 
+        // ===== 真实进度（gRPC）：轮询后端，拿到就用真实步数替代模拟 =====
+        let progressPollTimer = null;
+        let usingRealProgress = false;
+
+        // 按百分比直接更新：按钮光效 / 进度条 / 进度文本（pct 为已完成百分比）
+        function setProgressPercent(pct) {
+            pct = Math.max(0, Math.min(100, Math.round(pct)));
+            const generateBtn = document.getElementById('generateBtn');
+            if (generateBtn) generateBtn.style.setProperty('--progress', pct + '%');
+            const progressBar = document.getElementById('progressBar');
+            if (progressBar) progressBar.style.width = (100 - pct) + '%';
+            const progressPercent = document.getElementById('progressPercent');
+            if (progressPercent) progressPercent.textContent = pct + '%';
+        }
+
+        function startProgressPolling(taskId, steps) {
+            usingRealProgress = false;
+            if (progressPollTimer) clearInterval(progressPollTimer);
+            progressPollTimer = setInterval(async () => {
+                try {
+                    const r = await fetch(
+                        `${API_BASE}/api/generate/progress?task_id=${encodeURIComponent(taskId)}`,
+                        { credentials: 'include' }
+                    );
+                    const d = await r.json();
+                    if (d && d.available) {
+                        // 首次拿到真实进度 → 停掉模拟
+                        if (!usingRealProgress) {
+                            usingRealProgress = true;
+                            if (progressInterval) {
+                                clearInterval(progressInterval);
+                                progressInterval = null;
+                            }
+                        }
+                        const total = d.total > 0 ? d.total : (steps || 1);
+                        let pct = Math.min(99, Math.round((d.step / total) * 100));
+                        if (d.stage === 'text_encoded' && pct < 3) pct = 3;
+                        if (d.stage === 'image_decoded') pct = 99;
+                        setProgressPercent(pct);
+                    }
+                } catch (e) { /* 忽略轮询错误 */ }
+            }, 400);
+        }
+
+        function stopProgressPolling() {
+            if (progressPollTimer) {
+                clearInterval(progressPollTimer);
+                progressPollTimer = null;
+            }
+            usingRealProgress = false;
+        }
+
         // Prompt Fullscreen Functions
         function openPromptFullscreen() {
             const modal = document.getElementById('promptFullscreenModal');
@@ -2402,6 +2756,75 @@
             }
         }
 
+        // ===== ntfy 通知配置（用户独立保存到服务端）=====
+
+        async function openNotifyConfigModal() {
+            if (!(await requireAuth())) return;
+            const modal = document.getElementById('notifyConfigModal');
+            modal.classList.add('show');
+
+            try {
+                const r = await fetch(`${API_BASE}/api/notify_config`, getFetchOptions());
+                const data = await r.json();
+                if (data.success && data.config) {
+                    document.getElementById('ntfyTopic').value = data.config.ntfy_topic || '';
+                    document.getElementById('ntfyServer').value = data.config.ntfy_server || '';
+                }
+            } catch (e) {
+                console.error('加载通知配置失败:', e);
+            }
+        }
+
+        function closeNotifyConfigModal() {
+            document.getElementById('notifyConfigModal').classList.remove('show');
+        }
+
+        async function saveNotifyConfig() {
+            const topic = document.getElementById('ntfyTopic').value.trim().replace(/^\/+/, '');
+            const server = document.getElementById('ntfyServer').value.trim();
+
+            try {
+                const r = await fetch(`${API_BASE}/api/notify_config`, getFetchOptions('POST', {
+                    ntfy_topic: topic,
+                    ntfy_server: server,
+                }));
+                const data = await r.json();
+                if (data.success) {
+                    alert(topic ? '通知配置保存成功！' : '已保存（主题为空，不推送通知）');
+                    closeNotifyConfigModal();
+                } else {
+                    alert('保存失败：' + (data.error || r.status));
+                }
+            } catch (e) {
+                alert('保存失败：' + e.message);
+            }
+        }
+
+        async function testNotifyConfig() {
+            const topic = document.getElementById('ntfyTopic').value.trim().replace(/^\/+/, '');
+            const server = document.getElementById('ntfyServer').value.trim();
+
+            if (!topic) {
+                alert('请先填写推送主题');
+                return;
+            }
+
+            try {
+                const r = await fetch(`${API_BASE}/api/notify_test`, getFetchOptions('POST', {
+                    ntfy_topic: topic,
+                    ntfy_server: server,
+                }));
+                const data = await r.json();
+                if (data.success) {
+                    alert('测试通知已发送，请检查 ntfy App');
+                } else {
+                    alert('发送失败：' + (data.error || r.status));
+                }
+            } catch (e) {
+                alert('发送失败：' + e.message);
+            }
+        }
+
         // Auto-save on input in fullscreen mode
         document.addEventListener('DOMContentLoaded', function() {
             const fullscreenTextarea = document.getElementById('promptFullscreenTextarea');
@@ -2424,6 +2847,10 @@
                 const presetModal = document.getElementById('presetModal');
                 if (presetModal.classList.contains('show')) {
                     closePresetModal();
+                }
+                const notifyModal = document.getElementById('notifyConfigModal');
+                if (notifyModal && notifyModal.classList.contains('show')) {
+                    closeNotifyConfigModal();
                 }
             }
         });
